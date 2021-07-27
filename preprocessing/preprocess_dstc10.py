@@ -3,7 +3,7 @@ import numpy as np
 import json
 
 
-def main():
+def main(include_summary=False):
     caption_pkl = pkl.load(open('data/dstc10/dstc10_data.caption.pickle', 'rb'))
     train = json.load(open('data/dstc10/train_set4DSTC7-AVSD.json'))
     dev = json.load(open('data/dstc10/valid_set4DSTC7-AVSD.json'))
@@ -15,9 +15,12 @@ def main():
         for c in d['dialog']:
             c_his = ' '.join(his)
             q = 'User: ' + c['question']
-            a = 'Rebot: ' + c['answer']
-            transcript.append(c_his + q)
-            text.append(a.replace('Rebot: ', ''))
+            a = 'Robot: ' + c['answer']
+            if include_summary:
+                transcript.append((c_his + ' ' + q + ' | ' + d['caption'] + ' | '+ d['summary']).strip())
+            else:
+                transcript.append((c_his + ' ' + q).strip())
+            text.append(a.replace('Robot: ', ''))
             his.append(q)
             his.append(a)
         caption_pkl[image_id]['text'] = np.array(text).reshape(-1)
@@ -25,7 +28,10 @@ def main():
         n = caption_pkl[image_id]['text'].shape[0]
         caption_pkl[image_id]['start'] = np.array(list(caption_pkl[image_id]['start']) * n)
         caption_pkl[image_id]['end'] = np.array(list(caption_pkl[image_id]['end']) * n)
-    pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.pickle', 'wb'))
+    if include_summary:
+        pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.summary.pickle', 'wb'))
+    else:
+        pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.pickle', 'wb'))
     print('done')
 
 
@@ -75,4 +81,4 @@ def main_merge_test_data():
 
 
 if __name__ == '__main__':
-    main_merge_test_data()
+    main(include_summary=True)
