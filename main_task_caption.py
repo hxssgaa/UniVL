@@ -93,6 +93,8 @@ def get_args(description='UniVL on Caption Task'):
     parser.add_argument('--cross_num_hidden_layers', type=int, default=2, help="Layer NO. of cross.")
     parser.add_argument('--decoder_num_hidden_layers', type=int, default=3, help="Layer NO. of decoder.")
 
+    parser.add_argument('--skip_visual', action='store_true', help="Whether to skip visual embedding.")
+
     parser.add_argument('--stage_two', action='store_true', help="Whether training with decoder.")
     args = parser.parse_args()
 
@@ -209,6 +211,7 @@ def dataloader_youcook_train(args, tokenizer):
         feature_framerate=args.feature_framerate,
         tokenizer=tokenizer,
         max_frames=args.max_frames,
+        skip_visual=args.skip_visual,
     )
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(youcook_dataset)
@@ -233,6 +236,7 @@ def dataloader_youcook_test(args, tokenizer):
         feature_framerate=args.feature_framerate,
         tokenizer=tokenizer,
         max_frames=args.max_frames,
+        skip_visual=args.skip_visual,
     )
 
     test_sampler = SequentialSampler(youcook_testset)
@@ -350,9 +354,15 @@ def train_epoch(epoch, args, model, train_dataloader, tokenizer, device, n_gpu, 
         #     batch = tuple(t.to(device) for t in batch)
         batch = tuple(t.to(device=device, non_blocking=True) for t in batch)
 
-        input_ids, input_mask, segment_ids, video, video_mask, \
-        pairs_masked_text, pairs_token_labels, masked_video, video_labels_index,\
-        pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+        if args.skip_visual:
+            input_ids, input_mask, segment_ids, \
+            pairs_masked_text, pairs_token_labels, \
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            video = video_mask = masked_video = video_labels_index = None
+        else:
+            input_ids, input_mask, segment_ids, video, video_mask, \
+            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index,\
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
 
         loss = model(input_ids, segment_ids, input_mask, video, video_mask,
                      pairs_masked_text=pairs_masked_text, pairs_token_labels=pairs_token_labels,

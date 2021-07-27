@@ -23,6 +23,7 @@ class Youcook_Caption_DataLoader(Dataset):
             feature_framerate=1.0,
             max_words=30,
             max_frames=100,
+            skip_visual=False,
     ):
         """
         Args:
@@ -34,6 +35,7 @@ class Youcook_Caption_DataLoader(Dataset):
         self.max_words = max_words
         self.max_frames = max_frames
         self.tokenizer = tokenizer
+        self.skip_visual = skip_visual
 
         self.feature_size = self.feature_dict[self.csv["feature_file"].values[0]].shape[-1]
 
@@ -165,6 +167,8 @@ class Youcook_Caption_DataLoader(Dataset):
                pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, starts, ends
 
     def _get_video(self, idx, s, e):
+        if self.skip_visual:
+            return None, None, None, None
         video_mask = np.zeros((len(s), self.max_frames), dtype=np.long)
         max_video_length = [0] * len(s)
 
@@ -217,6 +221,11 @@ class Youcook_Caption_DataLoader(Dataset):
         pairs_text, pairs_mask, pairs_segment, \
         pairs_masked_text, pairs_token_labels, pairs_input_caption_ids, \
         pairs_decoder_mask, pairs_output_caption_ids, starts, ends = self._get_text(video_id, sub_id)
+
+        if self.skip_visual:
+            return pairs_text, pairs_mask, pairs_segment, \
+                   pairs_masked_text, pairs_token_labels, \
+                   pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids
 
         video, video_mask, masked_video, video_labels_index = self._get_video(idx, starts, ends)
 

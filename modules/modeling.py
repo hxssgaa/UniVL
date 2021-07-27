@@ -73,7 +73,8 @@ class UniVLPreTrainedModel(PreTrainedModel, nn.Module):
         model = cls(bert_config, visual_config, cross_config, decoder_config, *inputs, **kwargs)
 
         assert model.bert is not None
-        assert model.visual is not None
+        if not task_config.skip_visual:
+            assert model.visual is not None
 
         if state_dict is not None:
             model = cls.init_preweight(model, state_dict, task_config=task_config)
@@ -139,10 +140,11 @@ class UniVL(UniVLPreTrainedModel):
         # <=== End of Text Encoder
 
         # Video Encoder ===>
-        visual_config = update_attr("visual_config", visual_config, "num_hidden_layers",
-                                    self.task_config, "visual_num_hidden_layers")
-        self.visual = VisualModel(visual_config)
-        visual_word_embeddings_weight = self.visual.embeddings.word_embeddings.weight
+        if not task_config.skip_visual:
+            visual_config = update_attr("visual_config", visual_config, "num_hidden_layers",
+                                        self.task_config, "visual_num_hidden_layers")
+            self.visual = VisualModel(visual_config)
+            visual_word_embeddings_weight = self.visual.embeddings.word_embeddings.weight
         # <=== End of Video Encoder
 
         if self._stage_one is False or self.train_sim_after_cross:
@@ -159,7 +161,7 @@ class UniVL(UniVLPreTrainedModel):
                 self.decoder = DecoderModel(decoder_config, bert_word_embeddings_weight, bert_position_embeddings_weight)
                 # <=== End of Decoder
 
-            if self.task_config.do_pretrain:
+            if self.task_config.do_pretrain and not task_config.skip_visual:
                 self.cls = BertOnlyMLMHead(bert_config, bert_word_embeddings_weight)
                 self.cls_visual = VisualOnlyMLMHead(visual_config, visual_word_embeddings_weight)
                 self.alm_loss_fct = CrossEntropyLoss(ignore_index=-1)
@@ -192,8 +194,9 @@ class UniVL(UniVLPreTrainedModel):
         input_ids = input_ids.view(-1, input_ids.shape[-1])
         token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
         attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-        video_mask = video_mask.view(-1, video_mask.shape[-1])
-        video = self.normalize_video(video)
+        if not self.task_config.skip_visual:
+            video_mask = video_mask.view(-1, video_mask.shape[-1])
+            video = self.normalize_video(video)
 
         if input_caption_ids is not None:
             input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
@@ -301,18 +304,25 @@ class UniVL(UniVLPreTrainedModel):
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
             attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-            video_mask = video_mask.view(-1, video_mask.shape[-1])
-            video = self.normalize_video(video)
+            if not self.task_config.skip_visual:
+                video_mask = video_mask.view(-1, video_mask.shape[-1])
+                video = self.normalize_video(video)
 
         encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
         sequence_output = encoded_layers[-1]
 
-        visual_layers, _ = self.visual(video, video_mask, output_all_encoded_layers=True)
-        visual_output = visual_layers[-1]
+        if not self.task_config.skip_visual:
+            visual_layers, _ = self.visual(video, video_mask, output_all_encoded_layers=True)
+            visual_output = visual_layers[-1]
+        else:
+            visual_output = None
 
         return sequence_output, visual_output
 
     def _get_cross_output(self, sequence_output, visual_output, attention_mask, video_mask):
+        if self.task_config.skip_visual:
+            return sequence_output, None, attention_mask
+
         concat_features = torch.cat((sequence_output, visual_output), dim=1)  # concatnate tokens and frames
         concat_mask = torch.cat((attention_mask, video_mask), dim=1)
         text_type_ = torch.zeros_like(attention_mask)
@@ -395,7 +405,10 @@ class UniVL(UniVLPreTrainedModel):
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-            video_mask = video_mask.view(-1, video_mask.shape[-1])
+            if not self.task_config.skip_visual:
+                video_mask = video_mask.view(-1, video_mask.shape[-1])
+            else:
+                video_mask = None
 
             input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
             decoder_mask = decoder_mask.view(-1, decoder_mask.shape[-1])
@@ -411,7 +424,10 @@ class UniVL(UniVLPreTrainedModel):
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-            video_mask = video_mask.view(-1, video_mask.shape[-1])
+            if not self.task_config.skip_visual:
+                video_mask = video_mask.view(-1, video_mask.shape[-1])
+            else:
+                video_mask = None
 
             input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
             decoder_mask = decoder_mask.view(-1, decoder_mask.shape[-1])
