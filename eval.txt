@@ -2,6 +2,9 @@
 With pretrained weight + UniVL (BERT) on s3d
 BLEU_4: 13.1 METEOR: 0.1724, ROUGE_L: 0.3614, CIDEr: 0.2322
 
+Swin2BERT
+BLEU_4: 7.0 METEOR: 0.1632 ROUGE_L: 0.2925 CIDEr: 0.0898
+
 #Response:
 With pretrained weight + UniVL (BERT) on s3d
 12.1 (BLEU-4) METEOR: 0.1493, ROUGE_L: 0.3820, CIDEr: 1.2648
