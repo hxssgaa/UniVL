@@ -1,0 +1,24 @@
+#Caption:
+With pretrained weight + UniVL (BERT) on s3d
+BLEU_4: 13.1 METEOR: 0.1724, ROUGE_L: 0.3614, CIDEr: 0.2322
+
+#Response:
+With pretrained weight + UniVL (BERT) on s3d
+12.1 (BLEU-4) METEOR: 0.1493, ROUGE_L: 0.3820, CIDEr: 1.2648
+
+With pretrained weight + MED-CAT (BERT) (96, 256 max frames) on s3d
+12.1 (BLEU-4) METEOR: 0.1494, ROUGE_L: 0.3817, CIDEr: 1.2646
+
+Without pretrained weight + MED-CAT (BERT) on s3d
+BLEU_4: 10.8 METEOR: 0.1406, ROUGE_L: 0.3665, CIDEr: 1.1215
+
+Without pretrained weight + MED-CAT (BERT) on i3D_flow
+BLEU_4: 10.4 METEOR: 0.1367, ROUGE_L: 0.3602, CIDEr: 1.0627
+
+With pretrained weight + MED-CAT (BERT) (dialogue history only)
+(dev)BLEU_4: 11.9 METEOR: 0.1467, ROUGE_L: 0.3764, CIDEr: 1.2296
+(test)BLEU_4: 10.1 METEOR: 0.135 ROUGE_L: 0.325 CIDEr: 1.138
+
+With pretrained weight + BART-base (dialogue history only)
+(dev)Bleu_4: 9.4 METEOR: 0.212 ROUGE_L: 0.355 CIDEr: 0.768
+(test)Bleu_4: 9.6 METEOR: 0.135 ROUGE_L: 0.321 CIDEr: 1.063

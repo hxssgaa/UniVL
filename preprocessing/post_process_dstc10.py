@@ -30,10 +30,10 @@ def remove_duplicates(line):
     return ' '.join(line_spt[:t_idx])
 
 def main():
-    hyp = read_text('ckpts/ckpt_youcook_caption/hyp.txt')
+    hyp = json.load(open('eval/dstc7avsd_eval/sample/test_bart_dialoghisonly.json'))
     test_csv = pd.read_csv('data/dstc10/dstc10_test.csv')
     test_data = pkl.load(open('data/dstc10/dstc10_data.test.pickle', 'rb'))
-    template = json.load(open('ckpts/ckpt_youcook_caption/template.json'))
+    template = json.load(open('eval/dstc7avsd_eval/data/template.json'))
     cnt = 0
     mapping_idxes = []
     for each_test_data in list(test_data.values()):
@@ -41,7 +41,7 @@ def main():
             if c ==  '__UNDISCLOSED__':
                 mapping_idxes.append(cnt)
             cnt += 1
-    hyp = [hyp[idx].replace('\' ', '\'').replace(' ,', ',') for idx in mapping_idxes]
+    hyp = [hyp[idx].replace('\' ', '\'').replace(' ,', ',').replace('robot: ', '').strip() for idx in mapping_idxes]
     for idx in range(len(template['dialogs'])):
         template['dialogs'][idx]['dialog'][0]['answer'] = remove_duplicates(hyp[idx])
     json.dump(template, open('eval/dstc7avsd_eval/sample/pred.json', 'w'))
