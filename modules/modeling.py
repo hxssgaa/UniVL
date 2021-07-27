@@ -32,6 +32,7 @@ from modules.module_bert import BertModel, BertConfig, BertOnlyMLMHead
 from modules.module_visual import VisualModel, VisualConfig, VisualOnlyMLMHead
 from modules.module_cross import CrossModel, CrossConfig
 from modules.module_decoder import DecoderModel, DecoderConfig
+from modules.module_bart import BartModel, BartConfig
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,10 @@ class UniVLPreTrainedModel(PreTrainedModel, nn.Module):
             elif task_config.local_rank == -1:
                 task_config.local_rank = 0
 
-        bert_config, state_dict = BertConfig.get_config(pretrained_bert_name, cache_dir, type_vocab_size, state_dict, task_config=task_config)
+        if 'bert' in pretrained_bert_name:
+            bert_config, state_dict = BertConfig.get_config(pretrained_bert_name, cache_dir, type_vocab_size, state_dict, task_config=task_config)
+        else:
+            bert_config, state_dict = BartConfig.get_config(pretrained_bert_name, cache_dir, type_vocab_size, state_dict, task_config=task_config)
         visual_config, _ = VisualConfig.get_config(visual_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
         cross_config, _ = CrossConfig.get_config(cross_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
         decoder_config, _ = DecoderConfig.get_config(decoder_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
@@ -132,11 +136,17 @@ class UniVL(UniVLPreTrainedModel):
             show_log(task_config, "Test retrieval after cross encoder.")
 
         # Text Encoder ===>
-        bert_config = update_attr("bert_config", bert_config, "num_hidden_layers",
-                                   self.task_config, "text_num_hidden_layers")
-        self.bert = BertModel(bert_config)
-        bert_word_embeddings_weight = self.bert.embeddings.word_embeddings.weight
-        bert_position_embeddings_weight = self.bert.embeddings.position_embeddings.weight
+        if isinstance(bert_config, BertConfig):
+            bert_config = update_attr("bert_config", bert_config, "num_hidden_layers",
+                                       self.task_config, "text_num_hidden_layers")
+            self.bert = BertModel(bert_config)
+            bert_word_embeddings_weight = self.bert.embeddings.word_embeddings.weight
+            bert_position_embeddings_weight = self.bert.embeddings.position_embeddings.weight
+        else:
+            # TODO: set num hidden layers for BART
+            self.bert = BartModel(bert_config).encoder
+            bert_word_embeddings_weight = self.bert.embed_tokens.weight
+            bert_position_embeddings_weight = self.bert.embed_positions.weight
         # <=== End of Text Encoder
 
         # Video Encoder ===>
@@ -299,7 +309,7 @@ class UniVL(UniVLPreTrainedModel):
         nce_loss = nce_loss.mean()
         return nce_loss
 
-    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=False):
+    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=False, is_bert=True):
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
@@ -308,8 +318,12 @@ class UniVL(UniVLPreTrainedModel):
                 video_mask = video_mask.view(-1, video_mask.shape[-1])
                 video = self.normalize_video(video)
 
-        encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
-        sequence_output = encoded_layers[-1]
+        if 'bert' in self.task_config.bert_model:
+            encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
+            sequence_output = encoded_layers[-1]
+        else:
+            bert_output = self.bert(input_ids, attention_mask)
+            sequence_output = bert_output[0]
 
         if not self.task_config.skip_visual:
             visual_layers, _ = self.visual(video, video_mask, output_all_encoded_layers=True)

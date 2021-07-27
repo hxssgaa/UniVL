@@ -72,7 +72,7 @@ def whitespace_tokenize(text):
     return tokens
 
 
-class BertTokenizer(object):
+class AutoTokenizer(object):
     """Runs end-to-end tokenization: punctuation splitting"""
 
     def __init__(self, vocab_file, do_lower_case=True, max_len=None, never_split=("[UNK]", "[SEP]", "[MASK]", "[CLS]")):
