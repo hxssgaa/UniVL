@@ -376,7 +376,6 @@ def train_epoch(epoch, args, model, train_dataloader, tokenizer, device, n_gpu, 
             loss = loss / args.gradient_accumulation_steps
 
         loss.backward()
-
         total_loss += float(loss)
         if (step + 1) % args.gradient_accumulation_steps == 0:
 
@@ -432,10 +431,14 @@ def collate_active_info(input_tuples, inst_idx_to_position_map, active_inst_idx_
     active_inst_idx = torch.LongTensor(active_inst_idx).to(device)
 
     active_sequence_output_rpt = collect_active_part(sequence_output_rpt, active_inst_idx, n_prev_active_inst, n_bm)
-    active_visual_output_rpt = collect_active_part(visual_output_rpt, active_inst_idx, n_prev_active_inst, n_bm)
+    if visual_output_rpt is None:
+        active_visual_output_rpt = None
+        active_video_mask_rpt = None
+    else:
+        active_visual_output_rpt = collect_active_part(visual_output_rpt, active_inst_idx, n_prev_active_inst, n_bm)
+        active_video_mask_rpt = collect_active_part(video_mask_rpt, active_inst_idx, n_prev_active_inst, n_bm)
     active_input_ids_rpt = collect_active_part(input_ids_rpt, active_inst_idx, n_prev_active_inst, n_bm)
     active_input_mask_rpt = collect_active_part(input_mask_rpt, active_inst_idx, n_prev_active_inst, n_bm)
-    active_video_mask_rpt = collect_active_part(video_mask_rpt, active_inst_idx, n_prev_active_inst, n_bm)
     active_inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
 
     return (active_sequence_output_rpt, active_visual_output_rpt, active_input_ids_rpt, active_input_mask_rpt, active_video_mask_rpt), \
@@ -511,9 +514,15 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
     for batch in test_dataloader:
         batch = tuple(t.to(device, non_blocking=True) for t in batch)
 
-        input_ids, input_mask, segment_ids, video, video_mask, \
-        pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, \
-        pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+        if args.skip_visual:
+            input_ids, input_mask, segment_ids, \
+            pairs_masked_text, pairs_token_labels, \
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            video = video_mask = masked_video = video_labels_index = None
+        else:
+            input_ids, input_mask, segment_ids, video, video_mask, \
+            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, \
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
 
         with torch.no_grad():
             sequence_output, visual_output = model.get_sequence_visual_output(input_ids, segment_ids, input_mask, video, video_mask)
@@ -521,20 +530,26 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             n_bm = 5 # beam_size
             device = sequence_output.device
             n_inst, len_s, d_h = sequence_output.size()
-            _, len_v, v_h = visual_output.size()
 
             decoder = model.decoder_caption
 
             # Note: shaped first, then decoder need the parameter shaped=True
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             input_mask = input_mask.view(-1, input_mask.shape[-1])
-            video_mask = video_mask.view(-1, video_mask.shape[-1])
 
             sequence_output_rpt = sequence_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_s, d_h)
-            visual_output_rpt = visual_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_v, v_h)
+
+            if not args.skip_visual:
+                video_mask = video_mask.view(-1, video_mask.shape[-1])
+                _, len_v, v_h = visual_output.size()
+                visual_output_rpt = visual_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_v, v_h)
+                video_mask_rpt = video_mask.repeat(1, n_bm).view(n_inst * n_bm, len_v)
+            else:
+                visual_output_rpt = None
+                video_mask_rpt = None
+
             input_ids_rpt = input_ids.repeat(1, n_bm).view(n_inst * n_bm, len_s)
             input_mask_rpt = input_mask.repeat(1, n_bm).view(n_inst * n_bm, len_s)
-            video_mask_rpt = video_mask.repeat(1, n_bm).view(n_inst * n_bm, len_v)
 
             # -- Prepare beams
             inst_dec_beams = [Beam(n_bm, device=device, tokenizer=tokenizer) for _ in range(n_inst)]
@@ -679,7 +694,7 @@ def main():
             if args.local_rank == 0:
                 logger.info("Epoch %d/%s Finished, Train Loss: %f", epoch + 1, args.epochs, tr_loss)
                 output_model_file = save_model(epoch, args, model, type_name="")
-                if epoch > 0:
+                if epoch > -1:
                     Bleu_4 = eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalObj=nlgEvalObj)
                     if best_score <= Bleu_4:
                         best_score = Bleu_4

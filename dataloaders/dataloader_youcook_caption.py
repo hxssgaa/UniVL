@@ -40,7 +40,7 @@ class Youcook_Caption_DataLoader(Dataset):
         self.feature_size = self.feature_dict[self.csv["feature_file"].values[0]].shape[-1]
 
         # Get iterator video ids
-        video_id_list = [itm for itm in self.csv['video_id'].values]
+        video_id_list = [itm for itm in self.csv['video_id'].values][:10]
         self.video_id2idx_dict = {video_id: id for id, video_id in enumerate(video_id_list)}
         # Get all captions
         self.iter2video_pairs_dict = {}
