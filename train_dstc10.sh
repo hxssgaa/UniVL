@@ -1,6 +1,6 @@
 TRAIN_CSV="data/dstc10/dstc10_train.csv"
 VAL_CSV="data/dstc10/dstc10_val.csv"
-DATA_PATH="data/dstc10/dstc10_data.caption.pickle"
+DATA_PATH="data/dstc10/dstc10_data.summary.pickle"
 FEATURES_PATH="data/dstc10/dstc10_videos_features_all.pickle"
 INIT_MODEL="weight/univl.pretrained.bin"
 # INIT_MODEL="ckpts/ckpt_youcook_caption/pytorch_model.bin.ans_gen.medcat.dialoghisonly"
