@@ -30,7 +30,7 @@ def remove_duplicates(line):
     return ' '.join(line_spt[:t_idx])
 
 def main():
-    hyp = read_text('ckpts/ckpt_youcook_caption/test_hyp_univl_nonsummary_ansgen.txt')#json.load(open('eval/dstc7avsd_eval/sample/test_bart_dialoghisonly.json'))
+    hyp = read_text('ckpts/ckpt_youcook_caption/hyp_multientry_test2.txt')#json.load(open('eval/dstc7avsd_eval/sample/test_bart_dialoghisonly.json'))
     test_data = pkl.load(open('data/dstc10/dstc10_data.test.pickle', 'rb'))
     template = json.load(open('eval/dstc7avsd_eval/data/template.json'))
     cnt = 0
@@ -43,7 +43,7 @@ def main():
     hyp = [hyp[idx].replace('\' ', '\'').replace(' ,', ',').replace('robot: ', '').strip() for idx in mapping_idxes]
     for idx in range(len(template['dialogs'])):
         template['dialogs'][idx]['dialog'][0]['answer'] = remove_duplicates(hyp[idx])
-    json.dump(template, open('eval/dstc7avsd_eval/sample/univl_without_pred_summary_ansgen_pred.json', 'w'))
+    json.dump(template, open('eval/dstc7avsd_eval/sample/univl_huili.json', 'w'))
     print('done')
 
 

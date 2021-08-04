@@ -3,7 +3,7 @@ import numpy as np
 import json
 
 
-def main(include_summary=False):
+def main(include_summary=False, is_last=False):
     caption_pkl = pkl.load(open('data/dstc10/dstc10_data.caption.pickle', 'rb'))
     train = json.load(open('data/dstc10/train_set4DSTC7-AVSD.json'))
     dev = json.load(open('data/dstc10/valid_set4DSTC7-AVSD.json'))
@@ -23,6 +23,9 @@ def main(include_summary=False):
             text.append(a.replace('Robot: ', ''))
             his.append(q)
             his.append(a)
+        if is_last:
+            text = text[-1:]
+            transcript = transcript[-1:]
         caption_pkl[image_id]['text'] = np.array(text).reshape(-1)
         caption_pkl[image_id]['transcript'] = np.array(transcript).reshape(-1)
         n = caption_pkl[image_id]['text'].shape[0]
@@ -30,6 +33,8 @@ def main(include_summary=False):
         caption_pkl[image_id]['end'] = np.array(list(caption_pkl[image_id]['end']) * n)
     if include_summary:
         pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.summary.pickle', 'wb'))
+    elif is_last:
+        pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.last.pickle', 'wb'))
     else:
         pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.pickle', 'wb'))
     print('done')
@@ -80,5 +85,24 @@ def main_merge_test_data():
     print('done')
 
 
+def merge_test_data_ground_truth():
+    test_data = pkl.load(open('data/dstc10/dstc10_data.test.pickle', 'rb'))
+    gold = json.load(open('eval/dstc7avsd_eval/data/test_set4DSTC7-AVSD_partial.json'))
+    gold_annotation_map = {gold['images'][idx]['name'][:-2]: e['caption'] for idx, e in enumerate(gold['annotations'])}
+    for k, v in gold_annotation_map.items():
+        test_data[k]['text'] = np.array(list(test_data[k]['text'][:-1]) + [v]).reshape(-1)
+    pkl.dump(test_data, open('data/dstc10/dstc10_data.test.gold.pickle', 'wb'))
+    print('done')
+
+
+def merge_to_all():
+    train_data = pkl.load(open('data/dstc10/dstc10_data.pickle', 'rb'))
+    test_data = pkl.load(open('data/dstc10/dstc10_data.test.gold.pickle', 'rb'))
+    for k, v in test_data.items():
+        train_data[k] = v
+    pkl.dump(train_data, open('data/dstc10/dstc10_data.all.pickle', 'wb'))
+    print('done')
+
+
 if __name__ == '__main__':
-    main(include_summary=True)
+    merge_to_all()
