@@ -392,7 +392,7 @@ def eval_epoch(args, model, test_dataloader, device, n_gpu):
         model = model.to(device)
 
     model.eval()
-    flag = True
+    flag = False
     with torch.no_grad():
         batch_list = []
         batch_sequence_output_list, batch_visual_output_list = [], []

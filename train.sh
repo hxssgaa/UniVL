@@ -8,7 +8,7 @@ OUTPUT_ROOT="ckpts"
 python -m torch.distributed.launch --nproc_per_node=2 \
 	main_task_caption.py \
 	--do_train --num_thread_reader=2 \
-	--epochs=5 --batch_size=16 \
+	--epochs=5 --batch_size=32 \
 	--n_display=100 \
 	--train_csv ${TRAIN_CSV} \
 	--val_csv ${VAL_CSV} \
