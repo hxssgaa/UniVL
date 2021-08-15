@@ -26,6 +26,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss, MSELoss
+from torch.nn.modules import loss
 
 from modules.until_module import PreTrainedModel, LayerNorm, CrossEn, MILNCELoss, MaxMarginRankingLoss
 from modules.module_bert import BertModel, BertConfig, BertOnlyMLMHead
@@ -171,7 +172,11 @@ class UniVL(UniVLPreTrainedModel):
 
         self.normalize_video = NormalizeVideo(task_config)
 
+        self.start_dense = nn.Linear(bert_config.hidden_size, bert_config.hidden_size)
+        self.end_dense = nn.Linear(bert_config.hidden_size, bert_config.hidden_size)
+
         mILNCELoss = MILNCELoss(batch_size=task_config.batch_size // task_config.n_gpu, n_pair=task_config.n_pair, )
+        self.loss_act = nn.BCEWithLogitsLoss()
         maxMarginRankingLoss = MaxMarginRankingLoss(margin=task_config.margin,
                                                     negative_weighting=task_config.negative_weighting,
                                                     batch_size=task_config.batch_size // task_config.n_gpu,
@@ -187,91 +192,82 @@ class UniVL(UniVLPreTrainedModel):
 
         self.apply(self.init_weights)
 
-    def forward(self, input_ids, token_type_ids, attention_mask, video, video_mask=None,
-                pairs_masked_text=None, pairs_token_labels=None, masked_video=None, video_labels_index=None,
-                input_caption_ids=None, decoder_mask=None, output_caption_ids=None):
+    def forward(self, cand_input_ids, cand_attention_mask, video, video_mask=None,
+                start=None, end=None):
 
-        input_ids = input_ids.view(-1, input_ids.shape[-1])
-        token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
-        attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-        if not self.task_config.skip_visual:
-            video_mask = video_mask.view(-1, video_mask.shape[-1])
-            video = self.normalize_video(video)
+        num_cands = cand_input_ids.shape[1]
+        cand_input_ids = cand_input_ids.view(-1, cand_input_ids.shape[-1])
+        cand_attention_mask = cand_attention_mask.view(-1, cand_attention_mask.shape[-1])
+        video_mask = video_mask.view(-1, video_mask.shape[-1])
+        video = self.normalize_video(video)
 
-        if input_caption_ids is not None:
-            input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
-            decoder_mask = decoder_mask.view(-1, decoder_mask.shape[-1])
-
-        sequence_output, visual_output = self.get_sequence_visual_output(input_ids, token_type_ids, attention_mask,
+        sequence_output, visual_output = self.get_sequence_visual_output(cand_input_ids, cand_attention_mask,
                                                                          video, video_mask, shaped=True)
 
-        if self.training:
-            loss = 0.
-            if self._stage_one:
-                sim_matrix = self.get_similarity_logits(sequence_output, visual_output, attention_mask,
-                                                        video_mask, shaped=True)
-                sim_loss = self.loss_fct(sim_matrix)
-                loss += sim_loss
+        cand_text_out, video_out = self._mean_pooling_for_similarity(sequence_output, visual_output, cand_attention_mask, video_mask)
+        
+        start_text_emb = self.start_dense(cand_text_out)
+        end_text_emb = self.end_dense(cand_text_out)
+        
+        start_text_emb = start_text_emb.view(video_out.shape[0], -1, video_out.shape[2])
+        end_text_emb = end_text_emb.view(video_out.shape[0], -1, video_out.shape[2])
+        video_out = video_out.transpose(1, 2)
 
-            if self._stage_two:
-                if self.task_config.do_pretrain:
-                    pairs_masked_text = pairs_masked_text.view(-1, pairs_masked_text.shape[-1])
-                    pairs_token_labels = pairs_token_labels.view(-1, pairs_token_labels.shape[-1])
+        cand_text_start_logits = start_text_emb @ video_out
+        cand_text_end_logits = end_text_emb @ video_out
 
-                    masked_video = self.normalize_video(masked_video)
-                    video_labels_index = video_labels_index.view(-1, video_labels_index.shape[-1])
+        cand_text_start_logits = cand_text_start_logits.transpose(1, 2)
+        cand_text_end_logits = cand_text_end_logits.transpose(1, 2)
 
-                    sequence_output_alm, visual_output_alm = self.get_sequence_visual_output(pairs_masked_text, token_type_ids,
-                                                                                             attention_mask, masked_video, video_mask, shaped=True)
+        loss_start = self.loss_act(cand_text_start_logits, start)
+        loss_end = self.loss_act(cand_text_end_logits, start)
+        loss = loss_start + loss_end
+        
+        return loss
 
-                    cross_output, pooled_output, concat_mask = self._get_cross_output(sequence_output_alm, visual_output_alm, attention_mask, video_mask)
-                    sequence_cross_output, visual_cross_output = torch.split(cross_output, [attention_mask.size(-1), video_mask.size(-1)], dim=1)
+        # if self.training:
+        #     loss = 0.
+        #     if self._stage_one:
+        #         sim_matrix = self.get_similarity_logits(sequence_output, visual_output, attention_mask,
+        #                                                 video_mask, shaped=True)
+        #         sim_loss = self.loss_fct(sim_matrix)
+        #         loss += sim_loss
 
-                    alm_loss = self._calculate_mlm_loss(sequence_cross_output, pairs_token_labels)
-                    loss += alm_loss
+        #     if self._stage_two:
+        #         if (input_caption_ids is not None) and \
+        #                 (self.task_config.do_pretrain
+        #                  or (self.task_config.do_pretrain is False and self.task_config.task_type == "caption")):
+        #             if self.task_config.do_pretrain:
+        #                 decoder_scores, res_tuples = self._get_decoder_score(sequence_output_alm, visual_output_alm,
+        #                                                                      input_ids, attention_mask, video_mask,
+        #                                                                      input_caption_ids, decoder_mask, shaped=True)
+        #             elif self.task_config.task_type == "caption":
+        #                 decoder_scores, res_tuples = self._get_decoder_score(sequence_output, visual_output,
+        #                                                                      input_ids, attention_mask, video_mask,
+        #                                                                      input_caption_ids, decoder_mask, shaped=True)
+        #             else:
+        #                 raise NotImplementedError
 
-                    nce_loss = self._calculate_mfm_loss(visual_cross_output, video, video_mask, video_labels_index)
-                    loss += nce_loss
+        #             output_caption_ids = output_caption_ids.view(-1, output_caption_ids.shape[-1])
+        #             decoder_loss = self.decoder_loss_fct(decoder_scores.view(-1, self.bert_config.vocab_size), output_caption_ids.view(-1))
+        #             loss += decoder_loss
 
-                    sim_matrix = self.get_similarity_logits(sequence_output, visual_output, attention_mask, video_mask,
-                                                            shaped=True, _pretrain_joint=True)
-                    sim_loss_joint = self._pretrain_sim_loss_fct(sim_matrix)
-                    loss += sim_loss_joint
+        #         if self.task_config.do_pretrain or self.task_config.task_type == "retrieval":
+        #             if self.task_config.do_pretrain:
+        #                 sim_matrix_text_visual = self.get_similarity_logits(sequence_output_alm, visual_output_alm,
+        #                                                                     attention_mask, video_mask, shaped=True)
+        #             elif self.task_config.task_type == "retrieval":
+        #                 sim_matrix_text_visual = self.get_similarity_logits(sequence_output, visual_output,
+        #                                                                     attention_mask, video_mask, shaped=True)
+        #             else:
+        #                 raise NotImplementedError
 
-                if (input_caption_ids is not None) and \
-                        (self.task_config.do_pretrain
-                         or (self.task_config.do_pretrain is False and self.task_config.task_type == "caption")):
-                    if self.task_config.do_pretrain:
-                        decoder_scores, res_tuples = self._get_decoder_score(sequence_output_alm, visual_output_alm,
-                                                                             input_ids, attention_mask, video_mask,
-                                                                             input_caption_ids, decoder_mask, shaped=True)
-                    elif self.task_config.task_type == "caption":
-                        decoder_scores, res_tuples = self._get_decoder_score(sequence_output, visual_output,
-                                                                             input_ids, attention_mask, video_mask,
-                                                                             input_caption_ids, decoder_mask, shaped=True)
-                    else:
-                        raise NotImplementedError
+        #             sim_loss_text_visual = self.loss_fct(sim_matrix_text_visual)
+        #             loss += sim_loss_text_visual
 
-                    output_caption_ids = output_caption_ids.view(-1, output_caption_ids.shape[-1])
-                    decoder_loss = self.decoder_loss_fct(decoder_scores.view(-1, self.bert_config.vocab_size), output_caption_ids.view(-1))
-                    loss += decoder_loss
-
-                if self.task_config.do_pretrain or self.task_config.task_type == "retrieval":
-                    if self.task_config.do_pretrain:
-                        sim_matrix_text_visual = self.get_similarity_logits(sequence_output_alm, visual_output_alm,
-                                                                            attention_mask, video_mask, shaped=True)
-                    elif self.task_config.task_type == "retrieval":
-                        sim_matrix_text_visual = self.get_similarity_logits(sequence_output, visual_output,
-                                                                            attention_mask, video_mask, shaped=True)
-                    else:
-                        raise NotImplementedError
-
-                    sim_loss_text_visual = self.loss_fct(sim_matrix_text_visual)
-                    loss += sim_loss_text_visual
-
-            return loss
-        else:
-            return None
+        #     return loss
+        # else:
+        #     return None
 
     def _calculate_mlm_loss(self, sequence_output_alm, pairs_token_labels):
         alm_scores = self.cls(sequence_output_alm)
@@ -299,16 +295,8 @@ class UniVL(UniVLPreTrainedModel):
         nce_loss = nce_loss.mean()
         return nce_loss
 
-    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=False):
-        if shaped is False:
-            input_ids = input_ids.view(-1, input_ids.shape[-1])
-            token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
-            attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-            if not self.task_config.skip_visual:
-                video_mask = video_mask.view(-1, video_mask.shape[-1])
-                video = self.normalize_video(video)
-
-        encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
+    def get_sequence_visual_output(self, input_ids, attention_mask, video, video_mask, shaped=False):
+        encoded_layers, _ = self.bert(input_ids, None, attention_mask, output_all_encoded_layers=True)
         sequence_output = encoded_layers[-1]
 
         if not self.task_config.skip_visual:
@@ -340,13 +328,7 @@ class UniVL(UniVLPreTrainedModel):
         sequence_output = sequence_output * attention_mask_un
         text_out = torch.sum(sequence_output, dim=1) / torch.sum(attention_mask_un, dim=1, dtype=torch.float)
 
-        video_mask_un = video_mask.to(dtype=torch.float).unsqueeze(-1)
-        visual_output = visual_output * video_mask_un
-        video_mask_un_sum = torch.sum(video_mask_un, dim=1, dtype=torch.float)
-        video_mask_un_sum[video_mask_un_sum == 0.] = 1.
-        video_out = torch.sum(visual_output, dim=1) / video_mask_un_sum
-
-        return text_out, video_out
+        return text_out, visual_output
 
     def _cross_similarity(self, sequence_output, visual_output, attention_mask, video_mask):
         b_text, s_text, h_text = sequence_output.size()
