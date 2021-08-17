@@ -13,6 +13,10 @@ With pretrained weight + UniVL (BERT) on s3d
 With pretrained weight + UniVL (BERT) finetuned for summary on s3d
 (dev)BLEU_4: 12.2 METEOR: 0.1496, ROUGE_L: 0.3809, CIDEr: 1.2588
 
+With pretrained weight + UniVL (BERT) on s3d + vggish
+(dev)BLEU-4: 12.4 METEOR: 0.1511, ROUGE_L: 0.3822, CIDEr: 1.2718
+
+
 With pretrained weight + gold summary + UniVL (BERT) on s3d
 (dev)BLEU-4: 13.9 METEOR: 0.1656, ROUGE_L: 0.4043, CIDEr: 1.4574
 
