@@ -354,11 +354,11 @@ class UniVL(UniVLPreTrainedModel):
         audio_type_ = torch.ones_like(audio_mask)
         concat_type = torch.cat((text_type_, video_type_, audio_type_), dim=1)
 
-        return concat_features, None, concat_mask
-        # cross_layers, pooled_output = self.cross(concat_features, concat_type, concat_mask, output_all_encoded_layers=True)
-        # cross_output = cross_layers[-1]
+        #return concat_features, None, concat_mask
+        cross_layers, pooled_output = self.cross(concat_features, concat_type, concat_mask, output_all_encoded_layers=True)
+        cross_output = cross_layers[-1]
 
-        # return cross_output, pooled_output, concat_mask
+        return cross_output, pooled_output, concat_mask
 
     def _mean_pooling_for_similarity(self, sequence_output, visual_output, attention_mask, video_mask,):
         attention_mask_un = attention_mask.to(dtype=torch.float).unsqueeze(-1)
