@@ -17,6 +17,7 @@ from modules.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from modules.modeling import UniVL
 from modules.optimization import BertAdam
 from modules.beam import Beam
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from dataloaders.dataloader_caption import Caption_DataLoader
 from dataloaders.dataloader_msrvtt_caption import MSRVTT_Caption_DataLoader
@@ -422,18 +423,25 @@ def beam_decode_step(decoder, inst_dec_beams, len_dec_seq,
         dec_partial_seq = dec_partial_seq.view(-1, len_dec_seq)
         return dec_partial_seq
 
+    def prepare_encoder_decoder_attns(dec_attn):
+        dec_attn_last = dec_attn[-1]
+        dec_attn_last_mean = torch.mean(dec_attn_last, dim=1)
+        return dec_attn_last_mean[:, -1, :].unsqueeze(1)
+
     def predict_word(next_decoder_ids, n_active_inst, n_bm, device, input_tuples):
         sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt = input_tuples
         next_decoder_mask = torch.ones(next_decoder_ids.size(), dtype=torch.uint8).to(device)
 
-        dec_output = decoder(sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt,
-                             video_mask_rpt, audio_mask_rpt, next_decoder_ids, next_decoder_mask, shaped=True, get_logits=True)
+        dec_output, dec_attn = decoder(sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt,
+                                video_mask_rpt, audio_mask_rpt, next_decoder_ids, next_decoder_mask, shaped=True, get_logits=True)
+        dec_attn = prepare_encoder_decoder_attns(dec_attn)
+
         dec_output = dec_output[:, -1, :]
         word_prob = torch.nn.functional.log_softmax(dec_output, dim=1)
         word_prob = word_prob.view(n_active_inst, n_bm, -1)
-        return word_prob
+        return word_prob, dec_attn
 
-    def collect_active_inst_idx_list(inst_beams, word_prob, inst_idx_to_position_map, decoder_length=None):
+    def collect_active_inst_idx_list(inst_beams, word_prob, dec_attn, inst_idx_to_position_map, decoder_length=None):
         active_inst_idx_list = []
         for inst_idx, inst_position in inst_idx_to_position_map.items():
             if decoder_length is None:
@@ -447,13 +455,13 @@ def beam_decode_step(decoder, inst_dec_beams, len_dec_seq,
 
     n_active_inst = len(inst_idx_to_position_map)
     dec_seq = prepare_beam_dec_seq(inst_dec_beams, len_dec_seq)
-    word_prob = predict_word(dec_seq, n_active_inst, n_bm, device, input_tuples)
+    word_prob, dec_attn = predict_word(dec_seq, n_active_inst, n_bm, device, input_tuples)
 
     # Update the beam with predicted word prob information and collect incomplete instances
-    active_inst_idx_list = collect_active_inst_idx_list(inst_dec_beams, word_prob, inst_idx_to_position_map,
+    active_inst_idx_list = collect_active_inst_idx_list(inst_dec_beams, word_prob, dec_attn, inst_idx_to_position_map,
                                                         decoder_length=decoder_length)
 
-    return active_inst_idx_list
+    return active_inst_idx_list, dec_attn
 
 def collect_hypothesis_and_scores(inst_dec_beams, n_best):
     all_hyp, all_scores = [], []
@@ -477,7 +485,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
     all_result_lists = []
     all_caption_lists = []
     model.eval()
-    for batch in test_dataloader:
+    for batch in tqdm(test_dataloader):
         batch = tuple(t.to(device, non_blocking=True) for t in batch)
 
         if args.skip_visual:
@@ -530,9 +538,11 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             # -- Bookkeeping for active or not
             active_inst_idx_list = list(range(n_inst))
             inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
+            # -- prepare decoder attentions
+            attw = None
             # -- Decode
             for len_dec_seq in range(1, args.max_words + 1):
-                active_inst_idx_list = beam_decode_step(decoder, inst_dec_beams,
+                active_inst_idx_list, dec_attn = beam_decode_step(decoder, inst_dec_beams,
                                                         len_dec_seq, inst_idx_to_position_map, n_bm, device,
                                                         (sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt))
 
@@ -542,15 +552,28 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 (sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt), \
                 inst_idx_to_position_map = collate_active_info((sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt),
                                                                inst_idx_to_position_map, active_inst_idx_list, n_bm, device)
+                if attw is not None and dec_attn.shape[0] != attw.shape[0]:
+                    dec_attn = torch.cat([dec_attn, torch.zeros((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device)])
+                attw = torch.cat([attw, dec_attn], dim=1) if attw is not None else dec_attn
 
             batch_hyp, batch_scores = collect_hypothesis_and_scores(inst_dec_beams, 1)
             result_list = [batch_hyp[i][0] for i in range(n_inst)]
+            attw = attw.view(n_inst, -1, attw.shape[1], attw.shape[2])
+            # Average for the encoder-decoder attention over beams
+            attw_mean = torch.mean(attw, axis=1)
 
             pairs_output_caption_ids = pairs_output_caption_ids.view(-1, pairs_output_caption_ids.shape[-1])
             caption_list = pairs_output_caption_ids.cpu().detach().numpy()
 
             for re_idx, re_list in enumerate(result_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
+                decode_attns = attw_mean[re_idx][:, input_ids.shape[1]:input_ids.shape[1]+len_v]
+                decode_attns_mean = torch.mean(decode_attns[decode_attns>-2].softmax(-1), axis=0)
+                frame_indices = torch.arange(len_v, dtype=torch.float, device=decode_attns.device) / len_v
+                frame_mean = float((frame_indices * decode_attns_mean).sum())
+                frame_std = float(((frame_indices - frame_mean) ** 2 * decode_attns_mean).sum().sqrt())
+                start_time = max(0.0, (frame_mean - frame_std))
+                end_time = min(1.0, (frame_mean + frame_std))
                 if "[SEP]" in decode_text_list:
                     SEP_index = decode_text_list.index("[SEP]")
                     decode_text_list = decode_text_list[:SEP_index]

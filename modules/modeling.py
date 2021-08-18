@@ -260,11 +260,11 @@ class UniVL(UniVLPreTrainedModel):
                         (self.task_config.do_pretrain
                          or (self.task_config.do_pretrain is False and self.task_config.task_type == "caption")):
                     if self.task_config.do_pretrain:
-                        decoder_scores, res_tuples = self._get_decoder_score(sequence_output_alm, visual_output_alm,
+                        decoder_scores, res_tuples, _ = self._get_decoder_score(sequence_output_alm, visual_output_alm,
                                                                              input_ids, attention_mask, video_mask,
                                                                              input_caption_ids, decoder_mask, shaped=True)
                     elif self.task_config.task_type == "caption":
-                        decoder_scores, res_tuples = self._get_decoder_score(sequence_output, visual_output, audio_output,
+                        decoder_scores, res_tuples, _ = self._get_decoder_score(sequence_output, visual_output, audio_output,
                                                                              input_ids, attention_mask, video_mask, audio_mask,
                                                                              input_caption_ids, decoder_mask, shaped=True)
                     else:
@@ -445,9 +445,9 @@ class UniVL(UniVLPreTrainedModel):
 
         res_tuples = ()
         cross_output, pooled_output, concat_mask = self._get_cross_output(sequence_output, visual_output, audio_output, attention_mask, video_mask, audio_mask)
-        decoder_scores = self.decoder(input_caption_ids, encoder_outs=cross_output, answer_mask=decoder_mask, encoder_mask=concat_mask)
+        decoder_scores, dec_att_scores = self.decoder(input_caption_ids, encoder_outs=cross_output, answer_mask=decoder_mask, encoder_mask=concat_mask)
 
-        return decoder_scores, res_tuples
+        return decoder_scores, res_tuples, dec_att_scores
 
     def decoder_caption(self, sequence_output, visual_output, audio_output, input_ids, attention_mask, video_mask, audio_mask, input_caption_ids, decoder_mask,
                         shaped=False, get_logits=False):
@@ -466,13 +466,13 @@ class UniVL(UniVLPreTrainedModel):
             input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
             decoder_mask = decoder_mask.view(-1, decoder_mask.shape[-1])
 
-        decoder_scores, _ = self._get_decoder_score(sequence_output, visual_output, audio_output,
+        decoder_scores, _, decoder_attn_scores = self._get_decoder_score(sequence_output, visual_output, audio_output,
                                                     input_ids, attention_mask, video_mask, audio_mask,
                                                     input_caption_ids, decoder_mask, shaped=True)
 
         if get_logits:
-            return decoder_scores
+            return decoder_scores, decoder_attn_scores
 
         _, decoder_scores_result = torch.max(decoder_scores, -1)
 
-        return decoder_scores_result
+        return decoder_scores_result, decoder_attn_scores
