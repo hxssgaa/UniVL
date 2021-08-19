@@ -484,6 +484,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
 
     all_result_lists = []
     all_caption_lists = []
+    all_time_lists = []
     model.eval()
     for batch in tqdm(test_dataloader):
         batch = tuple(t.to(device, non_blocking=True) for t in batch)
@@ -553,7 +554,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 inst_idx_to_position_map = collate_active_info((sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt),
                                                                inst_idx_to_position_map, active_inst_idx_list, n_bm, device)
                 if attw is not None and dec_attn.shape[0] != attw.shape[0]:
-                    dec_attn = torch.cat([dec_attn, torch.zeros((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device)])
+                    dec_attn = torch.cat([dec_attn, torch.ones((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device) * -1000])
                 attw = torch.cat([attw, dec_attn], dim=1) if attw is not None else dec_attn
 
             batch_hyp, batch_scores = collect_hypothesis_and_scores(inst_dec_beams, 1)
@@ -568,12 +569,15 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             for re_idx, re_list in enumerate(result_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
                 decode_attns = attw_mean[re_idx][:, input_ids.shape[1]:input_ids.shape[1]+len_v]
-                decode_attns_mean = torch.mean(decode_attns[decode_attns>-2].softmax(-1), axis=0)
+                decode_attns = decode_attns.softmax(-1)
+                decode_attns_mean = torch.mean(decode_attns, axis=0)
                 frame_indices = torch.arange(len_v, dtype=torch.float, device=decode_attns.device) / len_v
                 frame_mean = float((frame_indices * decode_attns_mean).sum())
                 frame_std = float(((frame_indices - frame_mean) ** 2 * decode_attns_mean).sum().sqrt())
                 start_time = max(0.0, (frame_mean - frame_std))
                 end_time = min(1.0, (frame_mean + frame_std))
+                start_time = len_v * start_time
+                end_time = len_v * end_time
                 if "[SEP]" in decode_text_list:
                     SEP_index = decode_text_list.index("[SEP]")
                     decode_text_list = decode_text_list[:SEP_index]
@@ -583,6 +587,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 decode_text = ' '.join(decode_text_list)
                 decode_text = decode_text.replace(" ##", "").strip("##").strip()
                 all_result_lists.append(decode_text)
+                all_time_lists.append('%.1f:%.1f' % (start_time, end_time))
 
             for re_idx, re_list in enumerate(caption_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
@@ -611,6 +616,11 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
     hyp_path = os.path.join(args.output_dir, "hyp.txt")
     with open(hyp_path, "w", encoding='utf-8') as writer:
         for pre_txt in all_result_lists:
+            writer.write(pre_txt+"\n")
+    
+    hyp_time_path = os.path.join(args.output_dir, "hyp_time.txt")
+    with open(hyp_time_path, "w", encoding='utf-8') as writer:
+        for pre_txt in all_time_lists:
             writer.write(pre_txt+"\n")
 
     ref_path = os.path.join(args.output_dir, "ref.txt")
