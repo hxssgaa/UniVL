@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 from __future__ import print_function
 
 import torch
+from tqdm import tqdm
 from torch.utils.data import (SequentialSampler)
 import numpy as np
 import random
@@ -92,6 +93,8 @@ def get_args(description='UniVL on Retrieval Task'):
 
     parser.add_argument('--train_sim_after_cross', action='store_true', help="Test retrieval after cross encoder.")
     parser.add_argument('--expand_msrvtt_sentences', action='store_true', help="")
+    parser.add_argument('--skip_visual', action='store_true', help="Whether to skip visual embedding.")
+
 
     args = parser.parse_args()
 
@@ -330,6 +333,8 @@ def train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer, 
 
         input_ids, input_mask, segment_ids, video, video_mask, \
         pairs_masked_text, pairs_token_labels, masked_video, video_labels_index = batch
+        if global_step % log_step == 0 and local_rank == 0:
+            start_time = time.time()
         loss = model(input_ids, segment_ids, input_mask, video, video_mask,
                      pairs_masked_text=pairs_masked_text, pairs_token_labels=pairs_token_labels,
                      masked_video=masked_video, video_labels_index=video_labels_index)
@@ -359,18 +364,17 @@ def train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer, 
                             len(train_dataloader), "-".join([str('%.6f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]),
                             float(loss),
                             (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
-                start_time = time.time()
 
     total_loss = total_loss / len(train_dataloader)
     return total_loss, global_step
 
 def _run_on_single_gpu(model, batch_list_t, batch_list_v, batch_sequence_output_list, batch_visual_output_list):
     sim_matrix = []
-    for idx1, b1 in enumerate(batch_list_t):
+    for idx1, b1 in tqdm(enumerate(batch_list_t), total=len(batch_list_t)):
         input_ids, input_mask, segment_ids, _, _, _, _, _, _ = b1
         sequence_output = batch_sequence_output_list[idx1]
         each_row = []
-        for idx2, b2 in enumerate(batch_list_v):
+        for idx2, b2 in tqdm(enumerate(batch_list_v), total=len(batch_list_v)):
             _, _, _, video, video_mask, _, _, _, _ = b2
             visual_output = batch_visual_output_list[idx2]
             b1b2_logits = model.get_similarity_logits(sequence_output, visual_output, input_mask, video_mask)
@@ -388,6 +392,7 @@ def eval_epoch(args, model, test_dataloader, device, n_gpu):
         model = model.to(device)
 
     model.eval()
+    flag = True
     with torch.no_grad():
         batch_list = []
         batch_sequence_output_list, batch_visual_output_list = [], []
@@ -403,7 +408,7 @@ def eval_epoch(args, model, test_dataloader, device, n_gpu):
 
             print("{}/{}\r".format(bid, len(test_dataloader)), end="")
 
-        if n_gpu > 1:
+        if n_gpu > 1 and flag:
             device_ids = list(range(n_gpu))
             batch_list_t_splits = []
             batch_list_v_splits = []

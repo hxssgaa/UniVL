@@ -1,2 +1,11 @@
 .git
 .idea
+ckpts/
+*.pyc
+data/
+*.log
+screenlog.0
+.vscode
+weight/*
+modules/*
+eval/*

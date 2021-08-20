@@ -17,8 +17,9 @@ from modules.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from modules.modeling import UniVL
 from modules.optimization import BertAdam
 from modules.beam import Beam
+from tqdm import tqdm
 from torch.utils.data import DataLoader
-from dataloaders.dataloader_youcook_caption import Youcook_Caption_DataLoader
+from dataloaders.dataloader_caption import Caption_DataLoader
 from dataloaders.dataloader_msrvtt_caption import MSRVTT_Caption_DataLoader
 from util import get_logger
 torch.distributed.init_process_group(backend="nccl")
@@ -35,8 +36,10 @@ def get_args(description='UniVL on Caption Task'):
     parser.add_argument('--val_csv', type=str, default='data/youcookii_singlef_val.csv', help='')
     parser.add_argument('--data_path', type=str, default='data/youcookii_caption_transcript.pickle',
                         help='caption and transcription pickle file path')
-    parser.add_argument('--features_path', type=str, default='data/youcookii_videos_feature.pickle',
-                        help='feature path for 2D features')
+    parser.add_argument('--video_features_path', type=str, default='data/youcookii_videos_feature.pickle',
+                        help='feature path for video 2D features')
+    parser.add_argument('--audio_features_path', type=str, default='data/youcookii_audio_feature.pickle',
+                        help='feature path for audio 2D features')
 
     parser.add_argument('--num_thread_reader', type=int, default=1, help='')
     parser.add_argument('--lr', type=float, default=0.0001, help='initial learning rate')
@@ -46,6 +49,7 @@ def get_args(description='UniVL on Caption Task'):
     parser.add_argument('--lr_decay', type=float, default=0.9, help='Learning rate exp epoch decay')
     parser.add_argument('--n_display', type=int, default=100, help='Information display frequence')
     parser.add_argument('--video_dim', type=int, default=1024, help='video feature dimension')
+    parser.add_argument('--audio_dim', type=int, default=128, help='audio feature dimension')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--max_words', type=int, default=20, help='')
     parser.add_argument('--max_frames', type=int, default=100, help='')
@@ -60,6 +64,7 @@ def get_args(description='UniVL on Caption Task'):
                         help="The output directory where the model predictions and checkpoints will be written.")
     parser.add_argument("--bert_model", default="bert-base-uncased", type=str, required=True, help="Bert pre-trained model")
     parser.add_argument("--visual_model", default="visual-base", type=str, required=False, help="Visual module")
+    parser.add_argument("--audio_model", default="audio-base", type=str, required=False, help="Audio module")
     parser.add_argument("--cross_model", default="cross-base", type=str, required=False, help="Cross module")
     parser.add_argument("--decoder_model", default="decoder-base", type=str, required=False, help="Decoder module")
     parser.add_argument("--init_model", default=None, type=str, required=False, help="Initial model.")
@@ -93,8 +98,8 @@ def get_args(description='UniVL on Caption Task'):
     parser.add_argument('--cross_num_hidden_layers', type=int, default=2, help="Layer NO. of cross.")
     parser.add_argument('--decoder_num_hidden_layers', type=int, default=3, help="Layer NO. of decoder.")
 
-    parser.add_argument('--skip_visual', action='store_true', help="Whether to skip visual embedding.")
-
+    parser.add_argument('--skip_visual', action='store_true', default=False, help="Whether to skip visual embedding.")
+    parser.add_argument('--skip_audio', action='store_true', default=False, help="Whether to skip audio embedding.")
     parser.add_argument('--stage_two', action='store_true', help="Whether training with decoder.")
     args = parser.parse_args()
 
@@ -161,7 +166,7 @@ def init_model(args, device, n_gpu, local_rank):
 
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed')
-    model = UniVL.from_pretrained(args.bert_model, args.visual_model, args.cross_model, args.decoder_model,
+    model = UniVL.from_pretrained(args.bert_model, args.visual_model, args.audio_model, args.cross_model, args.decoder_model,
                                    cache_dir=cache_dir, state_dict=model_state_dict, task_config=args)
 
     model.to(device)
@@ -202,11 +207,12 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
 
     return optimizer, scheduler, model
 
-def dataloader_youcook_train(args, tokenizer):
-    youcook_dataset = Youcook_Caption_DataLoader(
+def dataloader_train(args, tokenizer):
+    dataset = Caption_DataLoader(
         csv=args.train_csv,
         data_path=args.data_path,
-        features_path=args.features_path,
+        video_features_path=args.video_features_path,
+        audio_features_path=args.audio_features_path,
         max_words=args.max_words,
         feature_framerate=args.feature_framerate,
         tokenizer=tokenizer,
@@ -214,9 +220,9 @@ def dataloader_youcook_train(args, tokenizer):
         skip_visual=args.skip_visual,
     )
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(youcook_dataset)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(dataset)
     dataloader = DataLoader(
-        youcook_dataset,
+        dataset,
         batch_size=args.batch_size // args.n_gpu,
         num_workers=args.num_thread_reader,
         pin_memory=False,
@@ -225,13 +231,14 @@ def dataloader_youcook_train(args, tokenizer):
         drop_last=True,
     )
 
-    return dataloader, len(youcook_dataset), train_sampler
+    return dataloader, len(dataset), train_sampler
 
-def dataloader_youcook_test(args, tokenizer):
-    youcook_testset = Youcook_Caption_DataLoader(
+def dataloader_test(args, tokenizer):
+    testset = Caption_DataLoader(
         csv=args.val_csv,
         data_path=args.data_path,
-        features_path=args.features_path,
+        video_features_path=args.video_features_path,
+        audio_features_path=args.audio_features_path,
         max_words=args.max_words,
         feature_framerate=args.feature_framerate,
         tokenizer=tokenizer,
@@ -239,9 +246,9 @@ def dataloader_youcook_test(args, tokenizer):
         skip_visual=args.skip_visual,
     )
 
-    test_sampler = SequentialSampler(youcook_testset)
-    dataloader_youcook = DataLoader(
-        youcook_testset,
+    test_sampler = SequentialSampler(testset)
+    dataloader = DataLoader(
+        testset,
         sampler=test_sampler,
         batch_size=args.batch_size_val,
         num_workers=args.num_thread_reader,
@@ -249,56 +256,9 @@ def dataloader_youcook_test(args, tokenizer):
     )
 
     if args.local_rank == 0:
-        logger.info('YoucookII validation pairs: {}'.format(len(youcook_testset)))
-    return dataloader_youcook, len(youcook_testset)
+        logger.info('YoucookII validation pairs: {}'.format(len(testset)))
+    return dataloader, len(testset)
 
-def dataloader_msrvtt_train(args, tokenizer):
-    msrvtt_dataset = MSRVTT_Caption_DataLoader(
-        csv_path=args.train_csv,
-        json_path=args.data_path,
-        features_path=args.features_path,
-        max_words=args.max_words,
-        feature_framerate=args.feature_framerate,
-        tokenizer=tokenizer,
-        max_frames=args.max_frames,
-        split_type="train",
-    )
-
-    train_sampler = torch.utils.data.distributed.DistributedSampler(msrvtt_dataset)
-    dataloader = DataLoader(
-        msrvtt_dataset,
-        batch_size=args.batch_size // args.n_gpu,
-        num_workers=args.num_thread_reader,
-        pin_memory=False,
-        shuffle=(train_sampler is None),
-        sampler=train_sampler,
-        drop_last=True,
-    )
-
-    return dataloader, len(msrvtt_dataset), train_sampler
-
-def dataloader_msrvtt_test(args, tokenizer, split_type="test",):
-    msrvtt_testset = MSRVTT_Caption_DataLoader(
-        csv_path=args.val_csv,
-        json_path=args.data_path,
-        features_path=args.features_path,
-        max_words=args.max_words,
-        feature_framerate=args.feature_framerate,
-        tokenizer=tokenizer,
-        max_frames=args.max_frames,
-        split_type=split_type,
-    )
-
-    test_sampler = SequentialSampler(msrvtt_testset)
-    dataloader_msrvtt = DataLoader(
-        msrvtt_testset,
-        sampler=test_sampler,
-        batch_size=args.batch_size_val,
-        num_workers=args.num_thread_reader,
-        pin_memory=False,
-        drop_last=False,
-    )
-    return dataloader_msrvtt, len(msrvtt_testset)
 
 def convert_state_dict_type(state_dict, ttype=torch.FloatTensor):
     if isinstance(state_dict, dict):
@@ -360,13 +320,14 @@ def train_epoch(epoch, args, model, train_dataloader, tokenizer, device, n_gpu, 
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
             video = video_mask = masked_video = video_labels_index = None
         else:
-            input_ids, input_mask, segment_ids, video, video_mask, \
-            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index,\
+            input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
+            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index,\
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
 
-        loss = model(input_ids, segment_ids, input_mask, video, video_mask,
+        loss = model(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask,
                      pairs_masked_text=pairs_masked_text, pairs_token_labels=pairs_token_labels,
                      masked_video=masked_video, video_labels_index=video_labels_index,
+                     masked_audio=masked_audio, audio_labels_index=audio_labels_index,
                      input_caption_ids=pairs_input_caption_ids, decoder_mask=pairs_decoder_mask,
                      output_caption_ids=pairs_output_caption_ids)
 
@@ -422,7 +383,7 @@ def collect_active_part(beamed_tensor, curr_active_inst_idx, n_prev_active_inst,
 
 def collate_active_info(input_tuples, inst_idx_to_position_map, active_inst_idx_list, n_bm, device):
     assert isinstance(input_tuples, tuple)
-    sequence_output_rpt, visual_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt = input_tuples
+    sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt = input_tuples
 
     # Sentences which are still active are collected,
     # so the decoder will not run on completed sentences.
@@ -437,11 +398,17 @@ def collate_active_info(input_tuples, inst_idx_to_position_map, active_inst_idx_
     else:
         active_visual_output_rpt = collect_active_part(visual_output_rpt, active_inst_idx, n_prev_active_inst, n_bm)
         active_video_mask_rpt = collect_active_part(video_mask_rpt, active_inst_idx, n_prev_active_inst, n_bm)
+    if audio_output_rpt is None:
+        active_audio_output_rpt = None
+        active_audio_mask_rpt = None
+    else:
+        active_audio_output_rpt = collect_active_part(audio_output_rpt, active_inst_idx, n_prev_active_inst, n_bm)
+        active_audio_mask_rpt = collect_active_part(audio_mask_rpt, active_inst_idx, n_prev_active_inst, n_bm)
     active_input_ids_rpt = collect_active_part(input_ids_rpt, active_inst_idx, n_prev_active_inst, n_bm)
     active_input_mask_rpt = collect_active_part(input_mask_rpt, active_inst_idx, n_prev_active_inst, n_bm)
     active_inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
 
-    return (active_sequence_output_rpt, active_visual_output_rpt, active_input_ids_rpt, active_input_mask_rpt, active_video_mask_rpt), \
+    return (active_sequence_output_rpt, active_visual_output_rpt, active_audio_output_rpt, active_input_ids_rpt, active_input_mask_rpt, active_video_mask_rpt, active_audio_mask_rpt), \
            active_inst_idx_to_position_map
 
 def beam_decode_step(decoder, inst_dec_beams, len_dec_seq,
@@ -456,18 +423,25 @@ def beam_decode_step(decoder, inst_dec_beams, len_dec_seq,
         dec_partial_seq = dec_partial_seq.view(-1, len_dec_seq)
         return dec_partial_seq
 
+    def prepare_encoder_decoder_attns(dec_attn):
+        dec_attn_last = dec_attn[-1]
+        dec_attn_last_mean = torch.mean(dec_attn_last, dim=1)
+        return dec_attn_last_mean[:, -1, :].unsqueeze(1)
+
     def predict_word(next_decoder_ids, n_active_inst, n_bm, device, input_tuples):
-        sequence_output_rpt, visual_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt = input_tuples
+        sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt = input_tuples
         next_decoder_mask = torch.ones(next_decoder_ids.size(), dtype=torch.uint8).to(device)
 
-        dec_output = decoder(sequence_output_rpt, visual_output_rpt, input_ids_rpt, input_mask_rpt,
-                             video_mask_rpt, next_decoder_ids, next_decoder_mask, shaped=True, get_logits=True)
+        dec_output, dec_attn = decoder(sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt,
+                                video_mask_rpt, audio_mask_rpt, next_decoder_ids, next_decoder_mask, shaped=True, get_logits=True)
+        dec_attn = prepare_encoder_decoder_attns(dec_attn)
+
         dec_output = dec_output[:, -1, :]
         word_prob = torch.nn.functional.log_softmax(dec_output, dim=1)
         word_prob = word_prob.view(n_active_inst, n_bm, -1)
-        return word_prob
+        return word_prob, dec_attn
 
-    def collect_active_inst_idx_list(inst_beams, word_prob, inst_idx_to_position_map, decoder_length=None):
+    def collect_active_inst_idx_list(inst_beams, word_prob, dec_attn, inst_idx_to_position_map, decoder_length=None):
         active_inst_idx_list = []
         for inst_idx, inst_position in inst_idx_to_position_map.items():
             if decoder_length is None:
@@ -481,13 +455,13 @@ def beam_decode_step(decoder, inst_dec_beams, len_dec_seq,
 
     n_active_inst = len(inst_idx_to_position_map)
     dec_seq = prepare_beam_dec_seq(inst_dec_beams, len_dec_seq)
-    word_prob = predict_word(dec_seq, n_active_inst, n_bm, device, input_tuples)
+    word_prob, dec_attn = predict_word(dec_seq, n_active_inst, n_bm, device, input_tuples)
 
     # Update the beam with predicted word prob information and collect incomplete instances
-    active_inst_idx_list = collect_active_inst_idx_list(inst_dec_beams, word_prob, inst_idx_to_position_map,
+    active_inst_idx_list = collect_active_inst_idx_list(inst_dec_beams, word_prob, dec_attn, inst_idx_to_position_map,
                                                         decoder_length=decoder_length)
 
-    return active_inst_idx_list
+    return active_inst_idx_list, dec_attn
 
 def collect_hypothesis_and_scores(inst_dec_beams, n_best):
     all_hyp, all_scores = [], []
@@ -510,8 +484,9 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
 
     all_result_lists = []
     all_caption_lists = []
+    all_time_lists = []
     model.eval()
-    for batch in test_dataloader:
+    for batch in tqdm(test_dataloader):
         batch = tuple(t.to(device, non_blocking=True) for t in batch)
 
         if args.skip_visual:
@@ -520,12 +495,12 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
             video = video_mask = masked_video = video_labels_index = None
         else:
-            input_ids, input_mask, segment_ids, video, video_mask, \
-            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, \
+            input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
+            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index, \
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
 
         with torch.no_grad():
-            sequence_output, visual_output = model.get_sequence_visual_output(input_ids, segment_ids, input_mask, video, video_mask)
+            sequence_output, visual_output, audio_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
             # -- Repeat data for beam search
             n_bm = 5 # beam_size
             device = sequence_output.device
@@ -547,6 +522,14 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             else:
                 visual_output_rpt = None
                 video_mask_rpt = None
+            if not args.skip_audio:
+                audio_mask = audio_mask.view(-1, audio_mask.shape[-1])
+                _, len_v, v_h = audio_output.size()
+                audio_output_rpt = audio_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_v, v_h)
+                audio_mask_rpt = audio_mask.repeat(1, n_bm).view(n_inst * n_bm, len_v)
+            else:
+                audio_output_rpt = None
+                audio_mask_rpt = None
 
             input_ids_rpt = input_ids.repeat(1, n_bm).view(n_inst * n_bm, len_s)
             input_mask_rpt = input_mask.repeat(1, n_bm).view(n_inst * n_bm, len_s)
@@ -556,27 +539,45 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             # -- Bookkeeping for active or not
             active_inst_idx_list = list(range(n_inst))
             inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
+            # -- prepare decoder attentions
+            attw = None
             # -- Decode
             for len_dec_seq in range(1, args.max_words + 1):
-                active_inst_idx_list = beam_decode_step(decoder, inst_dec_beams,
+                active_inst_idx_list, dec_attn = beam_decode_step(decoder, inst_dec_beams,
                                                         len_dec_seq, inst_idx_to_position_map, n_bm, device,
-                                                        (sequence_output_rpt, visual_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt))
+                                                        (sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt))
 
                 if not active_inst_idx_list:
                     break  # all instances have finished their path to <EOS>
 
-                (sequence_output_rpt, visual_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt), \
-                inst_idx_to_position_map = collate_active_info((sequence_output_rpt, visual_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt),
+                (sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt), \
+                inst_idx_to_position_map = collate_active_info((sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt),
                                                                inst_idx_to_position_map, active_inst_idx_list, n_bm, device)
+                if attw is not None and dec_attn.shape[0] != attw.shape[0]:
+                    dec_attn = torch.cat([dec_attn, torch.ones((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device) * -1000])
+                attw = torch.cat([attw, dec_attn], dim=1) if attw is not None else dec_attn
 
             batch_hyp, batch_scores = collect_hypothesis_and_scores(inst_dec_beams, 1)
             result_list = [batch_hyp[i][0] for i in range(n_inst)]
+            attw = attw.view(n_inst, -1, attw.shape[1], attw.shape[2])
+            # Average for the encoder-decoder attention over beams
+            attw_mean = torch.mean(attw, axis=1)
 
             pairs_output_caption_ids = pairs_output_caption_ids.view(-1, pairs_output_caption_ids.shape[-1])
             caption_list = pairs_output_caption_ids.cpu().detach().numpy()
 
             for re_idx, re_list in enumerate(result_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
+                decode_attns = attw_mean[re_idx][:, input_ids.shape[1]:input_ids.shape[1]+len_v]
+                decode_attns = decode_attns.softmax(-1)
+                decode_attns_mean = torch.mean(decode_attns, axis=0)
+                frame_indices = torch.arange(len_v, dtype=torch.float, device=decode_attns.device) / len_v
+                frame_mean = float((frame_indices * decode_attns_mean).sum())
+                frame_std = float(((frame_indices - frame_mean) ** 2 * decode_attns_mean).sum().sqrt())
+                start_time = max(0.0, (frame_mean - frame_std))
+                end_time = min(1.0, (frame_mean + frame_std))
+                start_time = len_v * start_time
+                end_time = len_v * end_time
                 if "[SEP]" in decode_text_list:
                     SEP_index = decode_text_list.index("[SEP]")
                     decode_text_list = decode_text_list[:SEP_index]
@@ -586,6 +587,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 decode_text = ' '.join(decode_text_list)
                 decode_text = decode_text.replace(" ##", "").strip("##").strip()
                 all_result_lists.append(decode_text)
+                all_time_lists.append('%.1f:%.1f' % (start_time, end_time))
 
             for re_idx, re_list in enumerate(caption_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
@@ -615,6 +617,11 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
     with open(hyp_path, "w", encoding='utf-8') as writer:
         for pre_txt in all_result_lists:
             writer.write(pre_txt+"\n")
+    
+    hyp_time_path = os.path.join(args.output_dir, "hyp_time.txt")
+    with open(hyp_time_path, "w", encoding='utf-8') as writer:
+        for pre_txt in all_time_lists:
+            writer.write(pre_txt+"\n")
 
     ref_path = os.path.join(args.output_dir, "ref.txt")
     with open(ref_path, "w", encoding='utf-8') as writer:
@@ -643,8 +650,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
     return Bleu_4
 
 DATALOADER_DICT = {}
-DATALOADER_DICT["youcook"] = {"train":dataloader_youcook_train, "val":dataloader_youcook_test}
-DATALOADER_DICT["msrvtt"] = {"train":dataloader_msrvtt_train, "val":dataloader_msrvtt_test}
+DATALOADER_DICT["default"] = {"train":dataloader_train, "val":dataloader_test}
 
 def main():
     global logger

@@ -12,32 +12,38 @@ import re
 import random
 import io
 
-class Youcook_Caption_DataLoader(Dataset):
-    """Youcook dataset loader."""
+class Caption_DataLoader(Dataset):
+    """Caption generation dataset loader."""
     def __init__(
             self,
             csv,
             data_path,
-            features_path,
+            video_features_path,
+            audio_features_path,
             tokenizer,
             feature_framerate=1.0,
             max_words=30,
             max_frames=100,
             skip_visual=False,
+            skip_audio=False,
     ):
         """
         Args:
         """
         self.csv = pd.read_csv(csv)
         self.data_dict = pickle.load(open(data_path, 'rb'))
-        self.feature_dict = pickle.load(open(features_path, 'rb'))
+        self.video_feature_dict = pickle.load(open(video_features_path, 'rb'))
+        if audio_features_path:
+            self.audio_feature_dict = pickle.load(open(audio_features_path, 'rb'))
+            self.audio_feature_size = self.audio_feature_dict[self.csv["feature_file"].values[0]].shape[-1]
         self.feature_framerate = feature_framerate
         self.max_words = max_words
         self.max_frames = max_frames
         self.tokenizer = tokenizer
         self.skip_visual = skip_visual
+        self.skip_audio = skip_audio
 
-        self.feature_size = self.feature_dict[self.csv["feature_file"].values[0]].shape[-1]
+        self.video_feature_size = self.video_feature_dict[self.csv["feature_file"].values[0]].shape[-1]
 
         # Get iterator video ids
         video_id_list = [itm for itm in self.csv['video_id'].values]
@@ -172,8 +178,8 @@ class Youcook_Caption_DataLoader(Dataset):
         video_mask = np.zeros((len(s), self.max_frames), dtype=np.long)
         max_video_length = [0] * len(s)
 
-        video_features = self.feature_dict[self.csv["feature_file"].values[idx]]
-        video = np.zeros((len(s), self.max_frames, self.feature_size), dtype=np.float)
+        video_features = self.video_feature_dict[self.csv["feature_file"].values[idx]]
+        video = np.zeros((len(s), self.max_frames, self.video_feature_size), dtype=np.float)
         for i in range(len(s)):
             start = int(s[i] * self.feature_framerate)
             end = int(e[i] * self.feature_framerate) + 1
@@ -213,6 +219,51 @@ class Youcook_Caption_DataLoader(Dataset):
 
         return video, video_mask, masked_video, video_labels_index
 
+    def _get_audio(self, idx, s, e):
+        audio_mask = np.zeros((len(s), self.max_frames), dtype=np.long)
+        max_audio_length = [0] * len(s)
+
+        audio_features = self.audio_feature_dict[self.csv["feature_file"].values[idx]]
+        audio = np.zeros((len(s), self.max_frames, self.audio_feature_size), dtype=np.float)
+        for i in range(len(s)):
+            start = int(s[i] * self.feature_framerate)
+            end = int(e[i] * self.feature_framerate) + 1
+            audio_slice = audio_features[start:end]
+
+            if self.max_frames < audio_slice.shape[0]:
+                audio_slice = audio_slice[:self.max_frames]
+
+            slice_shape = audio_slice.shape
+            max_audio_length[i] = max_audio_length[i] if max_audio_length[i] > slice_shape[0] else slice_shape[0]
+            if len(audio_slice) < 1:
+                print("video_id: {}, start: {}, end: {}".format(self.csv["video_id"].values[idx], start, end))
+                # pass
+            else:
+                audio[i][:slice_shape[0]] = audio_slice
+
+        for i, v_length in enumerate(max_audio_length):
+            audio_mask[i][:v_length] = [1] * v_length
+
+        # Mask Frame Model <-----
+        audio_labels_index = [[] for _ in range(len(s))]
+        masked_audio = audio.copy()
+        for i, video_pair_ in enumerate(masked_audio):
+            for j, _ in enumerate(video_pair_):
+                if j < max_audio_length[i]:
+                    prob = random.random()
+                    # mask token with 15% probability
+                    if prob < 0.15:
+                        masked_audio[i][j] = [0.] * audio.shape[-1]
+                        audio_labels_index[i].append(j)
+                    else:
+                        audio_labels_index[i].append(-1)
+                else:
+                    audio_labels_index[i].append(-1)
+        audio_labels_index = np.array(audio_labels_index, dtype=np.long)
+        # -----> Mask Frame Model
+
+        return audio, audio_mask, masked_audio, audio_labels_index
+
     def __getitem__(self, feature_idx):
 
         video_id, sub_id = self.iter2video_pairs_dict[feature_idx]
@@ -229,6 +280,8 @@ class Youcook_Caption_DataLoader(Dataset):
 
         video, video_mask, masked_video, video_labels_index = self._get_video(idx, starts, ends)
 
-        return pairs_text, pairs_mask, pairs_segment, video, video_mask, \
-               pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, \
+        audio, audio_mask, masked_audio, audio_labels_index = self._get_audio(idx, starts, ends)
+
+        return pairs_text, pairs_mask, pairs_segment, video, video_mask, audio, audio_mask, \
+               pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index, \
                pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids

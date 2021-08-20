@@ -399,8 +399,9 @@ class DecoderModel(PreTrainedModel):
                                       encoder_outs,
                                       self_attn_mask,
                                       extended_encoder_mask,
+                                      output_all_encoded_layers=True,
                                       )
         sequence_output = decoded_layers[-1]
         cls_scores = self.classifier(sequence_output)
 
-        return cls_scores
+        return cls_scores, dec_att_scores

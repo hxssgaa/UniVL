@@ -1,22 +1,38 @@
 #Caption:
 With pretrained weight + UniVL (BERT) on s3d
-BLEU_4: 13.1 METEOR: 0.1724, ROUGE_L: 0.3614, CIDEr: 0.2322
+(dev)BLEU_4: 13.1 METEOR: 0.1724, ROUGE_L: 0.3614, CIDEr: 0.2322
 
 Swin2BERT
-BLEU_4: 7.0 METEOR: 0.1632 ROUGE_L: 0.2925 CIDEr: 0.0898
+(dev)BLEU_4: 7.0 METEOR: 0.1632 ROUGE_L: 0.2925 CIDEr: 0.0898
 
 #Response:
 With pretrained weight + UniVL (BERT) on s3d
-12.1 (BLEU-4) METEOR: 0.1493, ROUGE_L: 0.3820, CIDEr: 1.2648
+(dev)BLEU-4: 12.1 METEOR: 0.1493, ROUGE_L: 0.3820, CIDEr: 1.2648
+(test)BLEU-4: 10.4 METEOR: 0.140 ROUGE_L: 0.334 CIDEr: 1.177
+
+With pretrained weight + UniVL (BERT) finetuned for summary on s3d
+(dev)BLEU_4: 12.2 METEOR: 0.1496, ROUGE_L: 0.3809, CIDEr: 1.2588
+
+With pretrained weight + UniVL (BERT) on s3d + vggish
+(dev)BLEU-4: 12.4 METEOR: 0.1511, ROUGE_L: 0.3822, CIDEr: 1.2718
+
+With pretrained weight + MED-CAT (BERT) on s3d + vggish
+(dev)BLEU-4: 12.2 METEOR: 0.1496, ROUGE_L: 0.3807, CIDEr: 1.2612
+
+With pretrained weight + gold summary + UniVL (BERT) on s3d
+(dev)BLEU-4: 13.9 METEOR: 0.1656, ROUGE_L: 0.4043, CIDEr: 1.4574
+
+With pretrained weight + predicted summary + UniVL (BERT) on s3d
+(test)BLEU-4: 10.3 METEOR: 0.136, ROUGE_L: 0.330, CIDEr: 1.171
 
 With pretrained weight + MED-CAT (BERT) (96, 256 max frames) on s3d
-12.1 (BLEU-4) METEOR: 0.1494, ROUGE_L: 0.3817, CIDEr: 1.2646
+(dev)BLEU-4: 12.1 METEOR: 0.1494, ROUGE_L: 0.3817, CIDEr: 1.2646
 
 Without pretrained weight + MED-CAT (BERT) on s3d
-BLEU_4: 10.8 METEOR: 0.1406, ROUGE_L: 0.3665, CIDEr: 1.1215
+(dev)BLEU_4: 10.8 METEOR: 0.1406, ROUGE_L: 0.3665, CIDEr: 1.1215
 
 Without pretrained weight + MED-CAT (BERT) on i3D_flow
-BLEU_4: 10.4 METEOR: 0.1367, ROUGE_L: 0.3602, CIDEr: 1.0627
+(dev)BLEU_4: 10.4 METEOR: 0.1367, ROUGE_L: 0.3602, CIDEr: 1.0627
 
 With pretrained weight + MED-CAT (BERT) (dialogue history only)
 (dev)BLEU_4: 11.9 METEOR: 0.1467, ROUGE_L: 0.3764, CIDEr: 1.2296
@@ -25,3 +41,10 @@ With pretrained weight + MED-CAT (BERT) (dialogue history only)
 With pretrained weight + BART-base (dialogue history only)
 (dev)Bleu_4: 9.4 METEOR: 0.212 ROUGE_L: 0.355 CIDEr: 0.768
 (test)Bleu_4: 9.6 METEOR: 0.135 ROUGE_L: 0.321 CIDEr: 1.063
+
+With pretrained weight + BART-large (dialogue history only)
+(dev)Bleu_4: 9.1 METEOR: 0.203 ROUGE_L: 0.343 CIDEr: 0.724
+
+With pretrained weight + T5-base (dialogue history only)
+(dev)Bleu_4: 9.1 METEOR: 0.210 ROUGE_L: 0.351 CIDEr: 0.728
+(test)Bleu_4: 9.6 METEOR: 0.186 ROUGE_L: 0.326 CIDEr: 0.576

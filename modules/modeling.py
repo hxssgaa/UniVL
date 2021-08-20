@@ -30,6 +30,7 @@ from torch.nn import CrossEntropyLoss, MSELoss
 from modules.until_module import PreTrainedModel, LayerNorm, CrossEn, MILNCELoss, MaxMarginRankingLoss
 from modules.module_bert import BertModel, BertConfig, BertOnlyMLMHead
 from modules.module_visual import VisualModel, VisualConfig, VisualOnlyMLMHead
+from modules.module_audio import AudioModel, AudioConfig, AudioOnlyMLMHead
 from modules.module_cross import CrossModel, CrossConfig
 from modules.module_decoder import DecoderModel, DecoderConfig
 from modules.module_bart import BartModel, BartConfig
@@ -41,21 +42,23 @@ class UniVLPreTrainedModel(PreTrainedModel, nn.Module):
     """ An abstract class to handle weights initialization and
         a simple interface for dowloading and loading pretrained models.
     """
-    def __init__(self, bert_config, visual_config, cross_config, decoder_config, *inputs, **kwargs):
+    def __init__(self, bert_config, visual_config, audio_config, cross_config, decoder_config, *inputs, **kwargs):
         # utilize bert config as base config
         super(UniVLPreTrainedModel, self).__init__(bert_config)
         self.bert_config = bert_config
         self.visual_config = visual_config
+        self.audio_config = audio_config
         self.cross_config = cross_config
         self.decoder_config = decoder_config
 
         self.bert = None
         self.visual = None
+        self.audio = None
         self.cross = None
         self.decoder = None
 
     @classmethod
-    def from_pretrained(cls, pretrained_bert_name, visual_model_name, cross_model_name, decoder_model_name,
+    def from_pretrained(cls, pretrained_bert_name, visual_model_name, audio_model_name, cross_model_name, decoder_model_name,
                         state_dict=None, cache_dir=None, type_vocab_size=2, *inputs, **kwargs):
 
         task_config = None
@@ -71,29 +74,32 @@ class UniVLPreTrainedModel(PreTrainedModel, nn.Module):
         else:
             bert_config, state_dict = BartConfig.get_config(pretrained_bert_name, cache_dir, type_vocab_size, state_dict, task_config=task_config)
         visual_config, _ = VisualConfig.get_config(visual_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
+        audio_config, _ = AudioConfig.get_config(audio_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
         cross_config, _ = CrossConfig.get_config(cross_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
         decoder_config, _ = DecoderConfig.get_config(decoder_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
 
-        model = cls(bert_config, visual_config, cross_config, decoder_config, *inputs, **kwargs)
+        model = cls(bert_config, visual_config, audio_config, cross_config, decoder_config, *inputs, **kwargs)
 
         assert model.bert is not None
         if not task_config.skip_visual:
             assert model.visual is not None
+        if not task_config.skip_audio:
+            assert model.audio is not None
 
         if state_dict is not None:
             model = cls.init_preweight(model, state_dict, task_config=task_config)
 
         return model
 
-class NormalizeVideo(nn.Module):
-    def __init__(self, task_config):
-        super(NormalizeVideo, self).__init__()
-        self.visual_norm2d = LayerNorm(task_config.video_dim)
+class Normalize2DFeatures(nn.Module):
+    def __init__(self, dim_size):
+        super(Normalize2DFeatures, self).__init__()
+        self.norm2d = LayerNorm(dim_size)
 
     def forward(self, video):
         video = torch.as_tensor(video).float()
         video = video.view(-1, video.shape[-2], video.shape[-1])
-        video = self.visual_norm2d(video)
+        video = self.norm2d(video)
         return video
 
 def show_log(task_config, info):
@@ -112,14 +118,15 @@ def check_attr(target_name, task_config):
     return hasattr(task_config, target_name) and task_config.__dict__[target_name]
 
 class UniVL(UniVLPreTrainedModel):
-    def __init__(self, bert_config, visual_config, cross_config, decoder_config, task_config):
-        super(UniVL, self).__init__(bert_config, visual_config, cross_config, decoder_config)
+    def __init__(self, bert_config, visual_config, audio_config, cross_config, decoder_config, task_config):
+        super(UniVL, self).__init__(bert_config, visual_config, audio_config, cross_config, decoder_config)
         self.task_config = task_config
         self.ignore_video_index = -1
 
         assert self.task_config.max_words <= bert_config.max_position_embeddings
         assert self.task_config.max_words <= decoder_config.max_target_embeddings
         assert self.task_config.max_frames <= visual_config.max_position_embeddings
+        assert self.task_config.max_frames <= audio_config.max_position_embeddings
         assert self.task_config.max_words + self.task_config.max_frames <= cross_config.max_position_embeddings
 
         self._stage_one = True
@@ -155,6 +162,12 @@ class UniVL(UniVLPreTrainedModel):
                                         self.task_config, "visual_num_hidden_layers")
             self.visual = VisualModel(visual_config)
             visual_word_embeddings_weight = self.visual.embeddings.word_embeddings.weight
+        if not task_config.skip_audio:
+            audio_config = update_attr("audio_config", audio_config, "num_hidden_layers",
+                                        self.task_config, "visual_num_hidden_layers")
+            self.audio = AudioModel(audio_config)
+            audio_word_embeddings_weight = self.audio.embeddings.word_embeddings.weight
+
         # <=== End of Video Encoder
 
         if self._stage_one is False or self.train_sim_after_cross:
@@ -179,7 +192,8 @@ class UniVL(UniVLPreTrainedModel):
             self.similarity_dense = nn.Linear(bert_config.hidden_size, 1)
             self.decoder_loss_fct = CrossEntropyLoss(ignore_index=-1)
 
-        self.normalize_video = NormalizeVideo(task_config)
+        self.normalize_video_feature = Normalize2DFeatures(task_config.video_dim)
+        self.normalize_audio_feature = Normalize2DFeatures(task_config.audio_dim)
 
         mILNCELoss = MILNCELoss(batch_size=task_config.batch_size // task_config.n_gpu, n_pair=task_config.n_pair, )
         maxMarginRankingLoss = MaxMarginRankingLoss(margin=task_config.margin,
@@ -198,7 +212,8 @@ class UniVL(UniVLPreTrainedModel):
         self.apply(self.init_weights)
 
     def forward(self, input_ids, token_type_ids, attention_mask, video, video_mask=None,
-                pairs_masked_text=None, pairs_token_labels=None, masked_video=None, video_labels_index=None,
+                audio=None, audio_mask=None, pairs_masked_text=None, pairs_token_labels=None, 
+                masked_video=None, video_labels_index=None, masked_audio=None, audio_labels_index=None, 
                 input_caption_ids=None, decoder_mask=None, output_caption_ids=None):
 
         input_ids = input_ids.view(-1, input_ids.shape[-1])
@@ -206,14 +221,17 @@ class UniVL(UniVLPreTrainedModel):
         attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
         if not self.task_config.skip_visual:
             video_mask = video_mask.view(-1, video_mask.shape[-1])
-            video = self.normalize_video(video)
+            video = self.normalize_video_feature(video)
+        if not self.task_config.skip_audio:
+            audio_mask = audio_mask.view(-1, audio_mask.shape[-1])
+            audio = self.normalize_audio_feature(audio)
 
         if input_caption_ids is not None:
             input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
             decoder_mask = decoder_mask.view(-1, decoder_mask.shape[-1])
 
-        sequence_output, visual_output = self.get_sequence_visual_output(input_ids, token_type_ids, attention_mask,
-                                                                         video, video_mask, shaped=True)
+        sequence_output, visual_output, audio_output = self.get_sequence_visual_audio_output(
+            input_ids, token_type_ids, attention_mask, video, video_mask, audio, audio_mask, shaped=True)
 
         if self.training:
             loss = 0.
@@ -228,10 +246,10 @@ class UniVL(UniVLPreTrainedModel):
                     pairs_masked_text = pairs_masked_text.view(-1, pairs_masked_text.shape[-1])
                     pairs_token_labels = pairs_token_labels.view(-1, pairs_token_labels.shape[-1])
 
-                    masked_video = self.normalize_video(masked_video)
+                    masked_video = self.normalize_video_feature(masked_video)
                     video_labels_index = video_labels_index.view(-1, video_labels_index.shape[-1])
 
-                    sequence_output_alm, visual_output_alm = self.get_sequence_visual_output(pairs_masked_text, token_type_ids,
+                    sequence_output_alm, visual_output_alm = self.get_sequence_visual_audio_output(pairs_masked_text, token_type_ids,
                                                                                              attention_mask, masked_video, video_mask, shaped=True)
 
                     cross_output, pooled_output, concat_mask = self._get_cross_output(sequence_output_alm, visual_output_alm, attention_mask, video_mask)
@@ -252,12 +270,12 @@ class UniVL(UniVLPreTrainedModel):
                         (self.task_config.do_pretrain
                          or (self.task_config.do_pretrain is False and self.task_config.task_type == "caption")):
                     if self.task_config.do_pretrain:
-                        decoder_scores, res_tuples = self._get_decoder_score(sequence_output_alm, visual_output_alm,
+                        decoder_scores, res_tuples, _ = self._get_decoder_score(sequence_output_alm, visual_output_alm,
                                                                              input_ids, attention_mask, video_mask,
                                                                              input_caption_ids, decoder_mask, shaped=True)
                     elif self.task_config.task_type == "caption":
-                        decoder_scores, res_tuples = self._get_decoder_score(sequence_output, visual_output,
-                                                                             input_ids, attention_mask, video_mask,
+                        decoder_scores, res_tuples, _ = self._get_decoder_score(sequence_output, visual_output, audio_output,
+                                                                             input_ids, attention_mask, video_mask, audio_mask,
                                                                              input_caption_ids, decoder_mask, shaped=True)
                     else:
                         raise NotImplementedError
@@ -309,14 +327,17 @@ class UniVL(UniVLPreTrainedModel):
         nce_loss = nce_loss.mean()
         return nce_loss
 
-    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=False, is_bert=True):
+    def get_sequence_visual_audio_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, audio, audio_mask, shaped=False, is_bert=True):
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
             attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
             if not self.task_config.skip_visual:
                 video_mask = video_mask.view(-1, video_mask.shape[-1])
-                video = self.normalize_video(video)
+                video = self.normalize_video_feature(video)
+            if not self.task_config.skip_audio:
+                audio_mask = audio_mask.view(-1, video_mask.shape[-1])
+                audio = self.normalize_audio_feature(audio)
 
         if 'bert' in self.task_config.bert_model:
             encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
@@ -330,19 +351,24 @@ class UniVL(UniVLPreTrainedModel):
             visual_output = visual_layers[-1]
         else:
             visual_output = None
+        if not self.task_config.skip_audio:
+            audio_layers, _ = self.audio(audio, audio_mask, output_all_encoded_layers=True)
+            audio_output = audio_layers[-1]
 
-        return sequence_output, visual_output
+        return sequence_output, visual_output, audio_output
 
-    def _get_cross_output(self, sequence_output, visual_output, attention_mask, video_mask):
+    def _get_cross_output(self, sequence_output, visual_output, audio_output, attention_mask, video_mask, audio_mask):
         if self.task_config.skip_visual:
             return sequence_output, None, attention_mask
 
-        concat_features = torch.cat((sequence_output, visual_output), dim=1)  # concatnate tokens and frames
-        concat_mask = torch.cat((attention_mask, video_mask), dim=1)
+        concat_features = torch.cat((sequence_output, visual_output, audio_output), dim=1)  # concatnate tokens and frames
+        concat_mask = torch.cat((attention_mask, video_mask, audio_mask), dim=1)
         text_type_ = torch.zeros_like(attention_mask)
         video_type_ = torch.ones_like(video_mask)
-        concat_type = torch.cat((text_type_, video_type_), dim=1)
+        audio_type_ = torch.ones_like(audio_mask)
+        concat_type = torch.cat((text_type_, video_type_, audio_type_), dim=1)
 
+        #return concat_features, None, concat_mask
         cross_layers, pooled_output = self.cross(concat_features, concat_type, concat_mask, output_all_encoded_layers=True)
         cross_output = cross_layers[-1]
 
@@ -414,7 +440,7 @@ class UniVL(UniVLPreTrainedModel):
 
         return retrieve_logits
 
-    def _get_decoder_score(self, sequence_output, visual_output, input_ids, attention_mask, video_mask, input_caption_ids, decoder_mask, shaped=False):
+    def _get_decoder_score(self, sequence_output, visual_output, audio_output, input_ids, attention_mask, video_mask, audio_mask, input_caption_ids, decoder_mask, shaped=False):
 
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
@@ -423,17 +449,21 @@ class UniVL(UniVLPreTrainedModel):
                 video_mask = video_mask.view(-1, video_mask.shape[-1])
             else:
                 video_mask = None
+            if not self.task_config.skip_audio:
+                audio_mask = audio_mask.view(-1, audio_mask.shape[-1])
+            else:
+                audio_mask = None
 
             input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
             decoder_mask = decoder_mask.view(-1, decoder_mask.shape[-1])
 
         res_tuples = ()
-        cross_output, pooled_output, concat_mask = self._get_cross_output(sequence_output, visual_output, attention_mask, video_mask)
-        decoder_scores = self.decoder(input_caption_ids, encoder_outs=cross_output, answer_mask=decoder_mask, encoder_mask=concat_mask)
+        cross_output, pooled_output, concat_mask = self._get_cross_output(sequence_output, visual_output, audio_output, attention_mask, video_mask, audio_mask)
+        decoder_scores, dec_att_scores = self.decoder(input_caption_ids, encoder_outs=cross_output, answer_mask=decoder_mask, encoder_mask=concat_mask)
 
-        return decoder_scores, res_tuples
+        return decoder_scores, res_tuples, dec_att_scores
 
-    def decoder_caption(self, sequence_output, visual_output, input_ids, attention_mask, video_mask, input_caption_ids, decoder_mask,
+    def decoder_caption(self, sequence_output, visual_output, audio_output, input_ids, attention_mask, video_mask, audio_mask, input_caption_ids, decoder_mask,
                         shaped=False, get_logits=False):
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
@@ -442,17 +472,21 @@ class UniVL(UniVLPreTrainedModel):
                 video_mask = video_mask.view(-1, video_mask.shape[-1])
             else:
                 video_mask = None
+            if not self.task_config.skip_audio:
+                audio_mask = audio_mask.view(-1, audio_mask.shape[-1])
+            else:
+                audio_mask = None
 
             input_caption_ids = input_caption_ids.view(-1, input_caption_ids.shape[-1])
             decoder_mask = decoder_mask.view(-1, decoder_mask.shape[-1])
 
-        decoder_scores, _ = self._get_decoder_score(sequence_output, visual_output,
-                                                    input_ids, attention_mask, video_mask,
+        decoder_scores, _, decoder_attn_scores = self._get_decoder_score(sequence_output, visual_output, audio_output,
+                                                    input_ids, attention_mask, video_mask, audio_mask,
                                                     input_caption_ids, decoder_mask, shaped=True)
 
         if get_logits:
-            return decoder_scores
+            return decoder_scores, decoder_attn_scores
 
         _, decoder_scores_result = torch.max(decoder_scores, -1)
 
-        return decoder_scores_result
+        return decoder_scores_result, decoder_attn_scores
