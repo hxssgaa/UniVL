@@ -38,7 +38,7 @@ def get_args(description='UniVL on Caption Task'):
                         help='caption and transcription pickle file path')
     parser.add_argument('--video_features_path', type=str, default='data/youcookii_videos_feature.pickle',
                         help='feature path for video 2D features')
-    parser.add_argument('--audio_features_path', type=str, default='data/youcookii_audio_feature.pickle',
+    parser.add_argument('--audio_features_path', type=str, default=None,
                         help='feature path for audio 2D features')
 
     parser.add_argument('--num_thread_reader', type=int, default=1, help='')
@@ -85,7 +85,7 @@ def get_args(description='UniVL on Caption Task'):
                              "See details at https://nvidia.github.io/apex/amp.html")
 
     parser.add_argument("--task_type", default="caption", type=str, help="Point the task `caption` to finetune.")
-    parser.add_argument("--datatype", default="youcook", type=str, help="Point the dataset `youcook` to finetune.")
+    parser.add_argument("--datatype", default="default", type=str, help="Point the dataset `youcook` to finetune.")
 
     parser.add_argument("--world_size", default=0, type=int, help="distribted training")
     parser.add_argument("--local_rank", default=0, type=int, help="distribted training")
@@ -218,6 +218,7 @@ def dataloader_train(args, tokenizer):
         tokenizer=tokenizer,
         max_frames=args.max_frames,
         skip_visual=args.skip_visual,
+        skip_audio=args.skip_audio
     )
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(dataset)
@@ -244,6 +245,7 @@ def dataloader_test(args, tokenizer):
         tokenizer=tokenizer,
         max_frames=args.max_frames,
         skip_visual=args.skip_visual,
+        skip_audio=args.skip_audio
     )
 
     test_sampler = SequentialSampler(testset)
@@ -319,6 +321,11 @@ def train_epoch(epoch, args, model, train_dataloader, tokenizer, device, n_gpu, 
             pairs_masked_text, pairs_token_labels, \
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
             video = video_mask = masked_video = video_labels_index = None
+        elif args.skip_audio:
+            input_ids, input_mask, segment_ids, video, video_mask, \
+            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index,\
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            audio = audio_mask = masked_audio = audio_labels_index = None
         else:
             input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
             pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index,\
@@ -494,6 +501,11 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             pairs_masked_text, pairs_token_labels, \
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
             video = video_mask = masked_video = video_labels_index = None
+        elif args.skip_audio:
+            input_ids, input_mask, segment_ids, video, video_mask, \
+            pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, \
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            audio = audio_mask = masked_audio = audio_labels_index = None
         else:
             input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
             pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index, \

@@ -26,8 +26,8 @@ def main():
 
 
 def convert_to_numpy():
-    path = '/home/hxssgaa/Developer/UniVL/data/atis/Audio_features_ATIS/features_all'
-    output_path = '/home/hxssgaa/Developer/UniVL/data/atis/Audio_features_ATIS/features'
+    path = '/home/hxssgaa/newdev/Developer/UniVL/data/atis/Embeddings/train/'
+    output_path = '/home/hxssgaa/newdev/Developer/UniVL/data/atis/Audio_features_ATIS/features_all_new/'
     for n in os.listdir(path):
         d = np.array(torch.load(open(os.path.join(path, n), 'rb')))
         np.save(output_path + n.replace('.pkl', '.npy'), d)
@@ -60,5 +60,5 @@ def gen_data():
 
 
 if __name__ == '__main__':
-    features = pkl.load(open('data/atis/atis_asr_features.pickle', 'rb'))
-    gen_data()
+    # features = pkl.load(open('data/atis/atis_asr_features.pickle', 'rb'))
+    convert_to_numpy()

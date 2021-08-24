@@ -43,7 +43,7 @@ class Caption_DataLoader(Dataset):
         self.skip_visual = skip_visual
         self.skip_audio = skip_audio
 
-        self.video_feature_size = self.video_feature_dict[self.csv["feature_file"].values[0]].shape[-1]
+        self.video_feature_size = self.video_feature_dict[self.csv["feature_file"].values[0]].shape[0]
 
         # Get iterator video ids
         video_id_list = [itm for itm in self.csv['video_id'].values]
@@ -178,12 +178,12 @@ class Caption_DataLoader(Dataset):
         video_mask = np.zeros((len(s), self.max_frames), dtype=np.long)
         max_video_length = [0] * len(s)
 
-        video_features = self.video_feature_dict[self.csv["feature_file"].values[idx]]
+        video_features = np.swapaxes(self.video_feature_dict[self.csv["feature_file"].values[idx]], 0, 1)
         video = np.zeros((len(s), self.max_frames, self.video_feature_size), dtype=np.float)
         for i in range(len(s)):
             start = int(s[i] * self.feature_framerate)
             end = int(e[i] * self.feature_framerate) + 1
-            video_slice = video_features[start:end]
+            video_slice = video_features #[start:end]
 
             if self.max_frames < video_slice.shape[0]:
                 video_slice = video_slice[:self.max_frames]
@@ -220,6 +220,9 @@ class Caption_DataLoader(Dataset):
         return video, video_mask, masked_video, video_labels_index
 
     def _get_audio(self, idx, s, e):
+        #if self.skip_audio:
+        return None, None, None, None
+        
         audio_mask = np.zeros((len(s), self.max_frames), dtype=np.long)
         max_audio_length = [0] * len(s)
 
@@ -279,6 +282,12 @@ class Caption_DataLoader(Dataset):
                    pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids
 
         video, video_mask, masked_video, video_labels_index = self._get_video(idx, starts, ends)
+        
+        if self.skip_audio:
+            return pairs_text, pairs_mask, pairs_segment, video, video_mask, \
+                pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, \
+                pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids
+
 
         audio, audio_mask, masked_audio, audio_labels_index = self._get_audio(idx, starts, ends)
 

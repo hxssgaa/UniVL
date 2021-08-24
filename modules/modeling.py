@@ -340,19 +340,25 @@ class UniVL(UniVLPreTrainedModel):
         if not self.task_config.skip_audio:
             audio_layers, _ = self.audio(audio, audio_mask, output_all_encoded_layers=True)
             audio_output = audio_layers[-1]
-
+        else:
+            audio_output = None
         return sequence_output, visual_output, audio_output
 
     def _get_cross_output(self, sequence_output, visual_output, audio_output, attention_mask, video_mask, audio_mask):
         if self.task_config.skip_visual:
             return sequence_output, None, attention_mask
 
-        concat_features = torch.cat((sequence_output, visual_output, audio_output), dim=1)  # concatnate tokens and frames
-        concat_mask = torch.cat((attention_mask, video_mask, audio_mask), dim=1)
         text_type_ = torch.zeros_like(attention_mask)
         video_type_ = torch.ones_like(video_mask)
-        audio_type_ = torch.ones_like(audio_mask)
-        concat_type = torch.cat((text_type_, video_type_, audio_type_), dim=1)
+        if self.task_config.skip_audio:
+            concat_features = torch.cat((sequence_output, visual_output), dim=1)
+            concat_mask = torch.cat((attention_mask, video_mask), dim=1)
+            concat_type = torch.cat((text_type_, video_type_), dim=1)
+        else:
+            audio_type_ = torch.ones_like(audio_mask)
+            concat_features = torch.cat((sequence_output, visual_output, audio_output), dim=1)  # concatnate tokens and frames
+            concat_mask = torch.cat((attention_mask, video_mask, audio_mask), dim=1)
+            concat_type = torch.cat((text_type_, video_type_, audio_type_), dim=1)
 
         #return concat_features, None, concat_mask
         cross_layers, pooled_output = self.cross(concat_features, concat_type, concat_mask, output_all_encoded_layers=True)
