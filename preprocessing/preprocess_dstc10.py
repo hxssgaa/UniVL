@@ -104,5 +104,23 @@ def merge_to_all():
     print('done')
 
 
+def main_for_gen_dialog():
+    caption_pkl = pkl.load(open('data/dstc10/dstc10_data.caption.pickle', 'rb'))
+    train = json.load(open('data/dstc10/train_set4DSTC7-AVSD.json'))
+    dev = json.load(open('data/dstc10/valid_set4DSTC7-AVSD.json'))
+    for d in train['dialogs'] + dev['dialogs']:
+        image_id = d['image_id']
+        his = []
+        transcript = []
+        text = ' '.join(['question : %s answer : %s' % (c['question'], c['answer']) for c in d['dialog']])
+        caption_pkl[image_id]['text'] = np.array(text).reshape(-1)
+        caption_pkl[image_id]['transcript'] = np.array([]).reshape(-1)
+        n = caption_pkl[image_id]['text'].shape[0]
+        caption_pkl[image_id]['start'] = np.array(list(caption_pkl[image_id]['start']) * n)
+        caption_pkl[image_id]['end'] = np.array(list(caption_pkl[image_id]['end']) * n)
+    pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.gen_dialog.pickle', 'wb'))
+    print('done')
+
+
 if __name__ == '__main__':
-    merge_to_all()
+    main_for_gen_dialog()

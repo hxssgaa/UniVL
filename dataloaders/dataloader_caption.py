@@ -83,7 +83,7 @@ class Caption_DataLoader(Dataset):
             start_, end_ = data_dict['start'][ind], data_dict['end'][ind]
             starts[i], ends[i] = start_, end_
             total_length_with_CLS = self.max_words - 1
-            words = self.tokenizer.tokenize(data_dict['transcript'][ind])
+            words = self.tokenizer.tokenize(data_dict['transcript'][ind]) if list(data_dict['transcript']) else []
 
             words = ["[CLS]"] + words
             if len(words) > total_length_with_CLS:
@@ -157,6 +157,17 @@ class Caption_DataLoader(Dataset):
             input_caption_ids = self.tokenizer.convert_tokens_to_ids(input_caption_words)
             output_caption_ids = self.tokenizer.convert_tokens_to_ids(output_caption_words)
             decoder_mask = [1] * len(input_caption_ids)
+
+            # # Mask non answer words for target
+            answer_idx = [idx for idx in range(len(output_caption_words)) 
+                if output_caption_words[idx] == 'answer' and output_caption_words[idx + 1] == ':']
+            question_idx = [idx for idx in range(len(output_caption_words)) 
+                if output_caption_words[idx] == 'question' and output_caption_words[idx + 1] == ':']
+            # for idx_qa in range(len(answer_idx)):
+            #     for z in range(question_idx[idx_qa], answer_idx[idx_qa] + 2):
+            #         output_caption_ids[z] = 0
+            #         decoder_mask[z] = 0
+
             while len(input_caption_ids) < self.max_words:
                 input_caption_ids.append(0)
                 output_caption_ids.append(0)

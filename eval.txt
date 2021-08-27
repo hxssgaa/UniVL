@@ -6,6 +6,9 @@ Swin2BERT
 (dev)BLEU_4: 7.0 METEOR: 0.1632 ROUGE_L: 0.2925 CIDEr: 0.0898
 
 #Response:
+Bart-base text only
+(dev) BLEU_4: 10.8 METEOR: 0.1458, ROUGE_L: 0.3686 CIDEr: 1.1527
+
 With pretrained weight + UniVL (BERT) on s3d
 (dev)BLEU-4: 12.1 METEOR: 0.1493, ROUGE_L: 0.3820, CIDEr: 1.2648
 (test)BLEU-4: 10.4 METEOR: 0.140 ROUGE_L: 0.334 CIDEr: 1.177

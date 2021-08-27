@@ -502,7 +502,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
         with torch.no_grad():
             sequence_output, visual_output, audio_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
             # -- Repeat data for beam search
-            n_bm = 5 # beam_size
+            n_bm = 1 # beam_size
             device = sequence_output.device
             n_inst, len_s, d_h = sequence_output.size()
 
@@ -540,7 +540,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             active_inst_idx_list = list(range(n_inst))
             inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
             # -- prepare decoder attentions
-            attw = None
+            # attw = None
             # -- Decode
             for len_dec_seq in range(1, args.max_words + 1):
                 active_inst_idx_list, dec_attn = beam_decode_step(decoder, inst_dec_beams,
@@ -553,31 +553,31 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 (sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt), \
                 inst_idx_to_position_map = collate_active_info((sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt),
                                                                inst_idx_to_position_map, active_inst_idx_list, n_bm, device)
-                if attw is not None and dec_attn.shape[0] != attw.shape[0]:
-                    dec_attn = torch.cat([dec_attn, torch.ones((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device) * -1000])
-                attw = torch.cat([attw, dec_attn], dim=1) if attw is not None else dec_attn
+                # if attw is not None and dec_attn.shape[0] != attw.shape[0]:
+                #     dec_attn = torch.cat([dec_attn, torch.ones((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device) * -1000])
+                # attw = torch.cat([attw, dec_attn], dim=1) if attw is not None else dec_attn
 
             batch_hyp, batch_scores = collect_hypothesis_and_scores(inst_dec_beams, 1)
             result_list = [batch_hyp[i][0] for i in range(n_inst)]
-            attw = attw.view(n_inst, -1, attw.shape[1], attw.shape[2])
+            # attw = attw.view(n_inst, -1, attw.shape[1], attw.shape[2])
             # Average for the encoder-decoder attention over beams
-            attw_mean = torch.mean(attw, axis=1)
+            # attw_mean = torch.mean(attw, axis=1)
 
             pairs_output_caption_ids = pairs_output_caption_ids.view(-1, pairs_output_caption_ids.shape[-1])
             caption_list = pairs_output_caption_ids.cpu().detach().numpy()
 
             for re_idx, re_list in enumerate(result_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
-                decode_attns = attw_mean[re_idx][:, input_ids.shape[1]:input_ids.shape[1]+len_v]
-                decode_attns = decode_attns.softmax(-1)
-                decode_attns_mean = torch.mean(decode_attns, axis=0)
-                frame_indices = torch.arange(len_v, dtype=torch.float, device=decode_attns.device) / len_v
-                frame_mean = float((frame_indices * decode_attns_mean).sum())
-                frame_std = float(((frame_indices - frame_mean) ** 2 * decode_attns_mean).sum().sqrt())
-                start_time = max(0.0, (frame_mean - frame_std))
-                end_time = min(1.0, (frame_mean + frame_std))
-                start_time = len_v * start_time
-                end_time = len_v * end_time
+                # decode_attns = attw_mean[re_idx][:, input_ids.shape[1]:input_ids.shape[1]+len_v]
+                # decode_attns = decode_attns.softmax(-1)
+                # decode_attns_mean = torch.mean(decode_attns, axis=0)
+                # frame_indices = torch.arange(len_v, dtype=torch.float, device=decode_attns.device) / len_v
+                # frame_mean = float((frame_indices * decode_attns_mean).sum())
+                # frame_std = float(((frame_indices - frame_mean) ** 2 * decode_attns_mean).sum().sqrt())
+                # start_time = max(0.0, (frame_mean - frame_std))
+                # end_time = min(1.0, (frame_mean + frame_std))
+                # start_time = len_v * start_time
+                # end_time = len_v * end_time
                 if "[SEP]" in decode_text_list:
                     SEP_index = decode_text_list.index("[SEP]")
                     decode_text_list = decode_text_list[:SEP_index]
@@ -587,7 +587,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 decode_text = ' '.join(decode_text_list)
                 decode_text = decode_text.replace(" ##", "").strip("##").strip()
                 all_result_lists.append(decode_text)
-                all_time_lists.append('%.1f:%.1f' % (start_time, end_time))
+                # all_time_lists.append('%.1f:%.1f' % (start_time, end_time))
 
             for re_idx, re_list in enumerate(caption_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
@@ -618,10 +618,10 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
         for pre_txt in all_result_lists:
             writer.write(pre_txt+"\n")
     
-    hyp_time_path = os.path.join(args.output_dir, "hyp_time.txt")
-    with open(hyp_time_path, "w", encoding='utf-8') as writer:
-        for pre_txt in all_time_lists:
-            writer.write(pre_txt+"\n")
+    # hyp_time_path = os.path.join(args.output_dir, "hyp_time.txt")
+    # with open(hyp_time_path, "w", encoding='utf-8') as writer:
+    #     for pre_txt in all_time_lists:
+    #         writer.write(pre_txt+"\n")
 
     ref_path = os.path.join(args.output_dir, "ref.txt")
     with open(ref_path, "w", encoding='utf-8') as writer:
@@ -700,7 +700,7 @@ def main():
             if args.local_rank == 0:
                 logger.info("Epoch %d/%s Finished, Train Loss: %f", epoch + 1, args.epochs, tr_loss)
                 output_model_file = save_model(epoch, args, model, type_name="")
-                if epoch > -1:
+                if epoch > 10:
                     Bleu_4 = eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalObj=nlgEvalObj)
                     if best_score <= Bleu_4:
                         best_score = Bleu_4

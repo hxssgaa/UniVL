@@ -35,6 +35,7 @@ class Beam():
             self.constants = Constants()
         else:
             self.constants = Constants.from_tokenizer(tokenizer)
+        self.tokenizer = tokenizer
 
         self.size = size
         self._done = False
