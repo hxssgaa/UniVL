@@ -12,6 +12,7 @@ import re
 import random
 import io
 
+
 class Caption_DataLoader(Dataset):
     """Caption generation dataset loader."""
     def __init__(
@@ -76,6 +77,7 @@ class Caption_DataLoader(Dataset):
 
         pairs_input_caption_ids = np.zeros((k, self.max_words), dtype=np.long)
         pairs_output_caption_ids = np.zeros((k, self.max_words), dtype=np.long)
+        pairs_output_context_caption_ids = np.zeros((k, self.max_words), dtype=np.long)
         pairs_decoder_mask = np.zeros((k, self.max_words), dtype=np.long)
 
         for i in range(k):
@@ -163,6 +165,10 @@ class Caption_DataLoader(Dataset):
                 if output_caption_words[idx] == 'answer' and output_caption_words[idx + 1] == ':']
             question_idx = [idx for idx in range(len(output_caption_words)) 
                 if output_caption_words[idx] == 'question' and output_caption_words[idx + 1] == ':']
+            if not answer_idx:
+                output_caption_context_ids = output_caption_ids
+            else:
+                output_caption_context_ids = [ee for e in [output_caption_ids[question_idx[idx]:answer_idx[idx]] for idx in range(len(answer_idx))] for ee in e]
             # for idx_qa in range(len(answer_idx)):
             #     for z in range(question_idx[idx_qa], answer_idx[idx_qa] + 2):
             #         output_caption_ids[z] = 0
@@ -172,16 +178,20 @@ class Caption_DataLoader(Dataset):
                 input_caption_ids.append(0)
                 output_caption_ids.append(0)
                 decoder_mask.append(0)
+            while len(output_caption_context_ids) < self.max_words:
+                output_caption_context_ids.append(0)
             assert len(input_caption_ids) == self.max_words
             assert len(output_caption_ids) == self.max_words
             assert len(decoder_mask) == self.max_words
+            assert len(output_caption_context_ids) == self.max_words
 
             pairs_input_caption_ids[i] = np.array(input_caption_ids)
             pairs_output_caption_ids[i] = np.array(output_caption_ids)
             pairs_decoder_mask[i] = np.array(decoder_mask)
+            pairs_output_context_caption_ids[i] = np.array(output_caption_context_ids)
 
         return pairs_text, pairs_mask, pairs_segment, pairs_masked_text, pairs_token_labels,\
-               pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, starts, ends
+               pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, pairs_output_context_caption_ids, starts, ends
 
     def _get_video(self, idx, s, e):
         if self.skip_visual:
@@ -282,12 +292,12 @@ class Caption_DataLoader(Dataset):
 
         pairs_text, pairs_mask, pairs_segment, \
         pairs_masked_text, pairs_token_labels, pairs_input_caption_ids, \
-        pairs_decoder_mask, pairs_output_caption_ids, starts, ends = self._get_text(video_id, sub_id)
+        pairs_decoder_mask, pairs_output_caption_ids, pairs_output_context_caption_ids, starts, ends = self._get_text(video_id, sub_id)
 
         if self.skip_visual:
             return pairs_text, pairs_mask, pairs_segment, \
                    pairs_masked_text, pairs_token_labels, \
-                   pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids
+                   pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, pairs_output_context_caption_ids
 
         video, video_mask, masked_video, video_labels_index = self._get_video(idx, starts, ends)
 
@@ -295,4 +305,4 @@ class Caption_DataLoader(Dataset):
 
         return pairs_text, pairs_mask, pairs_segment, video, video_mask, audio, audio_mask, \
                pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index, \
-               pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids
+               pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, pairs_output_context_caption_ids

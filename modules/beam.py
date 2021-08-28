@@ -6,6 +6,7 @@ https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/Beam.py
 """
 
 import torch
+import numpy as np
 
 class Constants():
     def __init__(self):
@@ -13,6 +14,8 @@ class Constants():
         self.UNK = 1
         self.BOS = 2
         self.EOS = 3
+        self.QUS = 3160
+        self.QUS_NEXT = 1024
         self.PAD_WORD = '[PAD]'
         self.UNK_WORD = '[UNK]'
         self.BOS_WORD = '[CLS]'
@@ -28,9 +31,16 @@ class Constants():
         return instance
 
 class Beam():
-    ''' Beam search '''
+    ''' Beam search for dialogue answer generation with given context'''
 
-    def __init__(self, size, device=False, tokenizer=None):
+    def _prepare_dialog_start_end_positions(self):
+        starts = [idx for idx in range(len(self.dialog_context)) 
+            if self.dialog_context[idx] == self.constants.QUS and self.dialog_context[idx+1] == self.constants.QUS_NEXT]
+        ends = [idx for idx in range(len(self.dialog_context)) 
+            if self.dialog_context[idx] == self.constants.QUS and self.dialog_context[idx+1] == self.constants.QUS_NEXT][1:] + list(np.where(self.dialog_context == self.constants.PAD)[0][:1])
+        return starts, ends
+
+    def __init__(self, size, device=False, tokenizer=None, dialog_context=None):
         if tokenizer is None:
             self.constants = Constants()
         else:
@@ -48,6 +58,20 @@ class Beam():
 
         # The outputs at each time-step.
         self.next_ys = [torch.full((size,), self.constants.BOS, dtype=torch.long, device=device)]
+
+        if dialog_context is not None:
+            self.dialog_context = dialog_context
+            self.dialog_starts, self.dialog_ends = self._prepare_dialog_start_end_positions()
+            init_len = self.dialog_ends[0] - self.dialog_starts[0]
+            for idx in range(init_len):
+                self.next_ys.append(torch.full((self.size,), self.dialog_context[self.dialog_starts[0] + idx], dtype=torch.long, device=device))
+                self.prev_ks.append(torch.full((self.size,), 0, dtype=torch.long, device=device))
+        self.started = False
+        self.dialog_index = 0
+            # self.next_ys[0] = torch.full((self.size,), self.constants.BOS, dtype=torch.long, device=device)
+            # self.next_ys[0][1:] = torch.tensor(self.dialog_context[init_len], dtype=torch.long, device=device)
+            # self.scores = torch.zeros((self.size,), dtype=torch.float, device=device)
+            # self.prev_ks = [torch.zeros(()) for idx in range(self.size - 1)]
 
     def get_current_state(self):
         "Get the outputs for the current timestep."
@@ -82,6 +106,7 @@ class Beam():
         # End condition is when top-of-beam is EOS.
         if self.next_ys[-1][0].item() == self.constants.EOS:
             self._done = True
+        self.started = True
 
         return self._done
 

@@ -317,12 +317,12 @@ def train_epoch(epoch, args, model, train_dataloader, tokenizer, device, n_gpu, 
         if args.skip_visual:
             input_ids, input_mask, segment_ids, \
             pairs_masked_text, pairs_token_labels, \
-            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, _ = batch
             video = video_mask = masked_video = video_labels_index = None
         else:
             input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
             pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index,\
-            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, _ = batch
 
         loss = model(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask,
                      pairs_masked_text=pairs_masked_text, pairs_token_labels=pairs_token_labels,
@@ -419,8 +419,13 @@ def beam_decode_step(decoder, inst_dec_beams, len_dec_seq,
     ''' Decode and update beam status, and then return active beam idx'''
     def prepare_beam_dec_seq(inst_dec_beams, len_dec_seq):
         dec_partial_seq = [b.get_current_state() for b in inst_dec_beams if not b.done]
-        dec_partial_seq = torch.stack(dec_partial_seq).to(device)
-        dec_partial_seq = dec_partial_seq.view(-1, len_dec_seq)
+        # dec_partial_seq = torch.stack(dec_partial_seq).to(device)
+        max_len = np.max([e.shape[1] for e in dec_partial_seq])
+        dec_partial_seq_concat = torch.zeros((len(dec_partial_seq), dec_partial_seq[0].shape[0], max_len), dtype=torch.long, device=device)
+        for idx in range(len(dec_partial_seq)):
+            dec_partial_seq_concat[idx][:, -dec_partial_seq[idx].shape[1]:] = dec_partial_seq[idx]
+        dec_partial_seq = dec_partial_seq_concat
+        dec_partial_seq = dec_partial_seq.view(-1, max_len)
         return dec_partial_seq
 
     def prepare_encoder_decoder_attns(dec_attn):
@@ -430,7 +435,7 @@ def beam_decode_step(decoder, inst_dec_beams, len_dec_seq,
 
     def predict_word(next_decoder_ids, n_active_inst, n_bm, device, input_tuples):
         sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt = input_tuples
-        next_decoder_mask = torch.ones(next_decoder_ids.size(), dtype=torch.uint8).to(device)
+        next_decoder_mask = (next_decoder_ids != 0).long()
 
         dec_output, dec_attn = decoder(sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt,
                                 video_mask_rpt, audio_mask_rpt, next_decoder_ids, next_decoder_mask, shaped=True, get_logits=True)
@@ -492,17 +497,17 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
         if args.skip_visual:
             input_ids, input_mask, segment_ids, \
             pairs_masked_text, pairs_token_labels, \
-            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, pairs_output_context_caption_ids = batch
             video = video_mask = masked_video = video_labels_index = None
         else:
             input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
             pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index, \
-            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
+            pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids, pairs_output_context_caption_ids = batch
 
         with torch.no_grad():
             sequence_output, visual_output, audio_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
             # -- Repeat data for beam search
-            n_bm = 1 # beam_size
+            n_bm = 2 # beam_size
             device = sequence_output.device
             n_inst, len_s, d_h = sequence_output.size()
 
@@ -535,7 +540,8 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             input_mask_rpt = input_mask.repeat(1, n_bm).view(n_inst * n_bm, len_s)
 
             # -- Prepare beams
-            inst_dec_beams = [Beam(n_bm, device=device, tokenizer=tokenizer) for _ in range(n_inst)]
+            inst_dec_beams = [Beam(n_bm, device=device, tokenizer=tokenizer, 
+                dialog_context=pairs_output_context_caption_ids[idx].squeeze(0).cpu().numpy()) for idx in range(n_inst)]
             # -- Bookkeeping for active or not
             active_inst_idx_list = list(range(n_inst))
             inst_idx_to_position_map = get_inst_idx_to_tensor_position_map(active_inst_idx_list)
@@ -553,6 +559,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 (sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt), \
                 inst_idx_to_position_map = collate_active_info((sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt),
                                                                inst_idx_to_position_map, active_inst_idx_list, n_bm, device)
+                print(len_dec_seq)
                 # if attw is not None and dec_attn.shape[0] != attw.shape[0]:
                 #     dec_attn = torch.cat([dec_attn, torch.ones((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device) * -1000])
                 # attw = torch.cat([attw, dec_attn], dim=1) if attw is not None else dec_attn
