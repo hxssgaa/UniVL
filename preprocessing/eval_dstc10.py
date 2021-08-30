@@ -3,18 +3,26 @@ import json
 import neval
 
 
+def read_text(data_path):
+    res = []
+    with open(data_path) as f:
+        for line in f.readlines():
+            res.append(line.strip())
+    return res
+
+
 def get_args(description='Eval DSTC 10'):
     parser = argparse.ArgumentParser(description=description)
 
-    parser.add_argument('--pred_json', type=str, default='data/youcookii_singlef_train.csv', help='')
-    parser.add_argument('--gold_json', type=str, default='data/youcookii_singlef_val.csv', help='')
+    parser.add_argument('--pred', type=str, default='', help='')
+    parser.add_argument('--gold', type=str, default='', help='')
 
     return parser.parse_args()
 
 
 def eval(args):
-    pred = json.load(open(args.pred_json))
-    gold = json.load(open(args.gold_json))
+    pred = read_text(args.pred)
+    gold = read_text(args.gold)
     print(neval.compute_metrics(pred, [gold]))
 
 

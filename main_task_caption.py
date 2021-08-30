@@ -147,7 +147,7 @@ def init_device(args, local_rank):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu", local_rank)
 
-    n_gpu = torch.cuda.device_count()
+    n_gpu = 1#torch.cuda.device_count()
     logger.info("device: {} n_gpu: {}".format(device, n_gpu))
     args.n_gpu = n_gpu
 
@@ -491,7 +491,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
     all_caption_lists = []
     all_time_lists = []
     model.eval()
-    for batch in tqdm(test_dataloader):
+    for idx_batch, batch in tqdm(enumerate(test_dataloader)):
         batch = tuple(t.to(device, non_blocking=True) for t in batch)
 
         if args.skip_visual:
@@ -507,7 +507,7 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
         with torch.no_grad():
             sequence_output, visual_output, audio_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
             # -- Repeat data for beam search
-            n_bm = 2 # beam_size
+            n_bm = 1 # beam_size
             device = sequence_output.device
             n_inst, len_s, d_h = sequence_output.size()
 
@@ -559,7 +559,6 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 (sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt), \
                 inst_idx_to_position_map = collate_active_info((sequence_output_rpt, visual_output_rpt, audio_output_rpt, input_ids_rpt, input_mask_rpt, video_mask_rpt, audio_mask_rpt),
                                                                inst_idx_to_position_map, active_inst_idx_list, n_bm, device)
-                print(len_dec_seq)
                 # if attw is not None and dec_attn.shape[0] != attw.shape[0]:
                 #     dec_attn = torch.cat([dec_attn, torch.ones((attw.shape[0] - dec_attn.shape[0], 1, dec_attn.shape[2]), device=dec_attn.device) * -1000])
                 # attw = torch.cat([attw, dec_attn], dim=1) if attw is not None else dec_attn

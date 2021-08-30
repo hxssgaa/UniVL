@@ -7,6 +7,7 @@ https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/Beam.py
 
 import torch
 import numpy as np
+from torch._C import Size
 
 class Constants():
     def __init__(self):
@@ -67,7 +68,7 @@ class Beam():
                 self.next_ys.append(torch.full((self.size,), self.dialog_context[self.dialog_starts[0] + idx], dtype=torch.long, device=device))
                 self.prev_ks.append(torch.full((self.size,), 0, dtype=torch.long, device=device))
         self.started = False
-        self.dialog_index = 0
+        self.dialog_index = [1] * self.size
             # self.next_ys[0] = torch.full((self.size,), self.constants.BOS, dtype=torch.long, device=device)
             # self.next_ys[0][1:] = torch.tensor(self.dialog_context[init_len], dtype=torch.long, device=device)
             # self.scores = torch.zeros((self.size,), dtype=torch.float, device=device)
@@ -85,12 +86,40 @@ class Beam():
     def done(self):
         return self._done
 
+    def _check_and_renormalise_beam_words(self):
+        if self.dialog_context is None:
+            return
+        device = self.next_ys[0].device
+        update_ys = [[] for _ in range(self.size)]
+        update_ks = [[] for _ in range(self.size)]
+        for each_beam in range(self.size):
+            if self.next_ys[-1][each_beam] == self.constants.QUS_NEXT and self.next_ys[-2][each_beam] == self.constants.QUS and self.dialog_index[each_beam] < len(self.dialog_starts):
+                cur_index = self.dialog_index[each_beam]
+                init_len = self.dialog_ends[cur_index] - self.dialog_starts[cur_index]
+                for idx in range(init_len):
+                    update_ys[each_beam].append(self.dialog_context[self.dialog_starts[cur_index] + idx])
+                    update_ks[each_beam].append(0)
+                self.dialog_index[each_beam] += 1
+        # Remove EOS token if dialogue generation hasn't been completed
+        for each_beam in range(self.size):
+            if self.next_ys[-1][each_beam] == self.constants.EOS:
+                self.next_ys = self.next_ys[:-1]
+                self.prev_ks = self.prev_ks[:-1]
+        update_ys = [e if not e else e[2:] for e in update_ys]
+        update_ks = [e if not e else e[2:] for e in update_ks]
+        max_len_update_ys = np.max([len(e) for e in update_ys])
+        update_ys = [e if len(e) == max_len_update_ys else e + [0] * (max_len_update_ys - len(e)) for e in update_ys]
+        update_ks = [e if len(e) == max_len_update_ys else e + [0] * (max_len_update_ys - len(e)) for e in update_ks]
+        for idx in range(max_len_update_ys):
+            self.next_ys.append(torch.tensor([update_ys[each_beam][idx] for each_beam in range(self.size)], dtype=torch.long, device=device))
+            self.prev_ks.append(torch.tensor([update_ks[each_beam][idx] for each_beam in range(self.size)], dtype=torch.long, device=device))
+
     def advance(self, word_prob, word_length=None):
 
         "Update beam status and check if finished or not."
         num_words = word_prob.size(1)
         # Sum the previous scores.
-        if len(self.prev_ks) > 0:
+        if self.started:
             beam_lk = word_prob + self.scores.unsqueeze(1).expand_as(word_prob)
         else:
             beam_lk = word_prob[0]
@@ -104,8 +133,10 @@ class Beam():
         self.prev_ks.append(prev_k)
         self.next_ys.append(best_scores_id - prev_k * num_words)
         # End condition is when top-of-beam is EOS.
-        if self.next_ys[-1][0].item() == self.constants.EOS:
+        if self.next_ys[-1][0].item() == self.constants.EOS and self.dialog_index[0] == len(self.dialog_starts):
             self._done = True
+            return True
+        self._check_and_renormalise_beam_words()
         self.started = True
 
         return self._done

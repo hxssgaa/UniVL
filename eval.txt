@@ -6,6 +6,9 @@ Swin2BERT
 (dev)BLEU_4: 7.0 METEOR: 0.1632 ROUGE_L: 0.2925 CIDEr: 0.0898
 
 #Response:
+Dialogue-generation based on s3d + changhuai's audio features
+Bleu_4: 9.5 METEOR: 0.133687 ROUGE_L: 0.345247 CIDEr: 0.934277
+
 Bart-base text only
 (dev) BLEU_4: 10.8 METEOR: 0.1458, ROUGE_L: 0.3686 CIDEr: 1.1527
 
