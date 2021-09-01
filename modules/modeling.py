@@ -33,6 +33,7 @@ from modules.module_visual import VisualModel, VisualConfig, VisualOnlyMLMHead
 from modules.module_audio import AudioModel, AudioConfig, AudioOnlyMLMHead
 from modules.module_cross import CrossModel, CrossConfig
 from modules.module_decoder import DecoderModel, DecoderConfig
+from modules.module_ef import MultimodalModel, MultimodalConfig
 from modules.module_attn import MultiheadedAttention, ResidualConnection
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,9 @@ class UniVL(UniVLPreTrainedModel):
                                         self.task_config, "visual_num_hidden_layers")
             self.audio = AudioModel(audio_config)
             audio_word_embeddings_weight = self.audio.embeddings.word_embeddings.weight
+
+        mm_config = MultimodalConfig()
+        self.mm_model = MultimodalModel(mm_config, self.bert.config, self.visual.config, self.audio.config)
 
         # <=== End of Video Encoder
         # TODO: Modify later
@@ -347,19 +351,22 @@ class UniVL(UniVLPreTrainedModel):
                 audio_mask = audio_mask.view(-1, video_mask.shape[-1])
                 audio = self.normalize_audio_feature(audio)
 
-        encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
-        sequence_output = encoded_layers[-1]
+        self.mm_model(input_ids, video, video_mask, audio, audio_mask, 
+            text_token_type_ids=token_type_ids, text_attention_mask=attention_mask, output_all_encoded_layers=True)
+        return None
+        # encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
+        # sequence_output = encoded_layers[-1]
 
-        if not self.task_config.skip_visual:
-            visual_layers, _ = self.visual(video, video_mask, output_all_encoded_layers=True)
-            visual_output = visual_layers[-1]
-        else:
-            visual_output = None
-        if not self.task_config.skip_audio:
-            audio_layers, _ = self.audio(audio, audio_mask, output_all_encoded_layers=True)
-            audio_output = audio_layers[-1]
+        # if not self.task_config.skip_visual:
+        #     visual_layers, _ = self.visual(video, video_mask, output_all_encoded_layers=True)
+        #     visual_output = visual_layers[-1]
+        # else:
+        #     visual_output = None
+        # if not self.task_config.skip_audio:
+        #     audio_layers, _ = self.audio(audio, audio_mask, output_all_encoded_layers=True)
+        #     audio_output = audio_layers[-1]
 
-        return sequence_output, visual_output, audio_output
+        # return sequence_output, visual_output, audio_output
 
     def _get_cross_output(self, sequence_output, visual_output, audio_output, attention_mask, video_mask, audio_mask):
         if self.task_config.skip_visual:
