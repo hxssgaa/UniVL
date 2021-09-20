@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from .file_utils import cached_path
 from .until_config import PretrainedConfig
 from .until_module import PreTrainedModel, LayerNorm, ACT2FN
+from modules.module_attn import MultiheadedAttention, ResidualConnection
 
 logger = logging.getLogger(__name__)
 
@@ -233,8 +234,11 @@ class Output(nn.Module):
 
 
 class MultimodalLayer(nn.Module):
-    def __init__(self, config, text_config, visual_config, audio_config, enable_text=True, enable_visual=True, enable_audio=True):
+    def __init__(self, config, text_config, visual_config, audio_config, enable_text=True, enable_visual=True, enable_audio=True, layer_number=None):
         super(MultimodalLayer, self).__init__()
+
+        drop_p = 0.1
+        H = 4
 
         if enable_text:
             self.text_attention = Attention(text_config)
@@ -249,10 +253,87 @@ class MultimodalLayer(nn.Module):
             self.audio_intermediate = Intermediate(audio_config)
             self.audio_output = Output(audio_config)
 
+        enable_fusion = False #layer_number > 8
+        if enable_text and enable_visual and enable_fusion:
+            self.bi_modal_att_text_visual = MultiheadedAttention(text_config.hidden_size, visual_config.hidden_size, visual_config.hidden_size, H, drop_p, text_config.hidden_size)
+            self.bi_modal_att_visual_text = MultiheadedAttention(visual_config.hidden_size, text_config.hidden_size, text_config.hidden_size, H, drop_p, visual_config.hidden_size)
+            self.res_layer_text_visual = ResidualConnection(text_config.hidden_size, drop_p)
+            self.res_layer_visual_text = ResidualConnection(visual_config.hidden_size, drop_p)
+
+        if enable_text and enable_audio and enable_fusion:
+            self.bi_modal_att_text_audio = MultiheadedAttention(text_config.hidden_size, audio_config.hidden_size, audio_config.hidden_size, H, drop_p, text_config.hidden_size)
+            self.bi_modal_att_audio_text = MultiheadedAttention(audio_config.hidden_size, text_config.hidden_size, text_config.hidden_size, H, drop_p, audio_config.hidden_size)
+            self.res_layer_text_audio = ResidualConnection(text_config.hidden_size, drop_p)
+            self.res_layer_audio_text = ResidualConnection(audio_config.hidden_size, drop_p)
+
+        if enable_visual and enable_audio and enable_fusion:
+            self.bi_modal_att_visual_audio = MultiheadedAttention(visual_config.hidden_size, audio_config.hidden_size, audio_config.hidden_size, H, drop_p, visual_config.hidden_size)
+            self.bi_modal_att_audio_visual = MultiheadedAttention(audio_config.hidden_size, visual_config.hidden_size, visual_config.hidden_size, H, drop_p, audio_config.hidden_size)
+            self.res_layer_visual_audio = ResidualConnection(visual_config.hidden_size, drop_p)
+            self.res_layer_audio_visual = ResidualConnection(audio_config.hidden_size, drop_p)
+
+        self.enable_text = enable_text
+        self.enable_visual = enable_visual
+        self.enable_audio = enable_audio
+        self.layer_number = layer_number
+        self.enable_fusion = enable_fusion
+
     def forward(self, hidden_states, attention_mask):
-        attention_output = self.attention(hidden_states, attention_mask)
-        intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
+        # Self attention
+        if self.enable_text:
+            text_attention_output = self.text_attention(hidden_states[0], attention_mask[0])
+        if self.enable_visual:
+            visual_attention_output = self.visual_attention(hidden_states[1], attention_mask[1])
+        if self.enable_audio:
+            audio_attention_output = self.audio_attention(hidden_states[2], attention_mask[2])
+
+        # Multimodal attention
+        attention_mask = [1 - m.squeeze(1) / (-10000.0) for m in attention_mask]
+        def sublayer_att_text_visual(text): return self.bi_modal_att_text_visual(text, visual_attention_output, visual_attention_output, attention_mask[1])
+        def sublayer_att_text_audio(text): return self.bi_modal_att_text_audio(text, audio_attention_output, audio_attention_output, attention_mask[2])
+
+        def sublayer_att_visual_text(visual): return self.bi_modal_att_visual_text(visual, text_attention_output, text_attention_output, attention_mask[0])
+        def sublayer_att_visual_audio(visual): return self.bi_modal_att_visual_audio(visual, audio_attention_output, audio_attention_output, attention_mask[2])
+
+        def sublayer_att_audio_text(audio): return self.bi_modal_att_audio_text(audio, text_attention_output, text_attention_output, attention_mask[0])
+        def sublayer_att_audio_visual(audio): return self.bi_modal_att_audio_visual(audio, visual_attention_output, visual_attention_output, attention_mask[1])
+        if self.enable_text and self.enable_visual and self.enable_fusion:
+            visual_aware_text_output = self.res_layer_text_visual(text_attention_output, sublayer_att_text_visual)
+            text_aware_visual_output = self.res_layer_visual_text(visual_attention_output, sublayer_att_visual_text)
+            text_attention_output = visual_aware_text_output
+            visual_attention_output = text_aware_visual_output
+        if self.enable_text and self.enable_audio and self.enable_fusion:
+            audio_aware_text_output = self.res_layer_text_audio(text_attention_output, sublayer_att_text_audio)
+            text_aware_audio_output = self.res_layer_audio_text(audio_attention_output, sublayer_att_audio_text)
+            text_attention_output = audio_aware_text_output
+            audio_attention_output = text_aware_audio_output
+        if self.enable_visual and self.enable_audio and self.enable_fusion:
+            audio_aware_visual_output = self.res_layer_visual_audio(visual_attention_output, sublayer_att_visual_audio)
+            visual_aware_audio_output = self.res_layer_audio_visual(audio_attention_output, sublayer_att_audio_visual)
+            visual_attention_output = audio_aware_visual_output
+            audio_attention_output = visual_aware_audio_output
+        attention_mask = [1 - m.unsqueeze(1) / (-10000.0) for m in attention_mask]
+
+        # Position-wise feed-forward
+        layer_output = []
+        if self.enable_text:
+            intermediate_text_output = self.text_intermediate(text_attention_output)
+            text_layer_output = self.text_output(intermediate_text_output, text_attention_output)
+            layer_output.append(text_layer_output)
+        else:
+            layer_output.append(hidden_states[0])
+        if self.enable_visual:
+            intermediate_visual_output = self.visual_intermediate(visual_attention_output)
+            visual_layer_output = self.visual_output(intermediate_visual_output, visual_attention_output)
+            layer_output.append(visual_layer_output)
+        else:
+            layer_output.append(hidden_states[1])
+        if self.enable_audio:
+            intermediate_audio_output = self.audio_intermediate(audio_attention_output)
+            audio_layer_output = self.audio_output(intermediate_audio_output, audio_attention_output)
+            layer_output.append(audio_layer_output)
+        else:
+            layer_output.append(hidden_states[2])
         return layer_output
 
 
@@ -268,11 +349,12 @@ class MultimodalEncoder(nn.Module):
         enable_visual = list(reversed([idx < visual_num_hidden for idx in range(max_num_hidden)]))
         enable_audio = list(reversed([idx < audio_num_hidden for idx in range(max_num_hidden)]))
         
-        self.layer = nn.ModuleList([MultimodalLayer(config, text_config, visual_config, audio_config) for idx in range(max_num_hidden)])
+        self.layer = nn.ModuleList([MultimodalLayer(config, text_config, visual_config, audio_config, 
+            enable_text=enable_text[idx], enable_visual=enable_visual[idx], enable_audio=enable_audio[idx], layer_number=idx) for idx in range(max_num_hidden)])
 
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
         all_encoder_layers = []
-        for layer_module in self.layer:
+        for idx_layer, layer_module in enumerate(self.layer):
             hidden_states = layer_module(hidden_states, attention_mask)
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
@@ -293,10 +375,13 @@ class MultimodalModel(PreTrainedModel):
         self.visual_embeddings = VisualEmbeddings(visual_config)
         self.audio_embeddings = VisualEmbeddings(audio_config)
         self.encoder = MultimodalEncoder(config, text_config, visual_config, audio_config)
+        self.text_pooler = Pooler(text_config)
+        self.visual_pooler = Pooler(visual_config)
+        self.audio_pooler = Pooler(audio_config)
 
         self.apply(self.init_weights)
 
-    def _prepare_text_attention_mask(self, attention_mask):
+    def _prepare_attention_mask(self, attention_mask):
         # We create a 3D attention mask from a 2D tensor mask.
         # Sizes are [batch_size, 1, 1, to_seq_length]
         # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
@@ -325,14 +410,22 @@ class MultimodalModel(PreTrainedModel):
         if text_token_type_ids is None:
             text_token_type_ids = torch.zeros_like(text_input_ids)
 
-        extended_text_attention_mask = self._prepare_text_attention_mask(text_attention_mask)
-        embedding_output = self.text_embeddings(text_input_ids, text_token_type_ids)
+        extended_text_attention_mask = self._prepare_attention_mask(text_attention_mask)
+        text_embedding_output = self.text_embeddings(text_input_ids, text_token_type_ids)
 
-        encoded_layers = self.encoder(embedding_output,
-                                      extended_attention_mask,
+        extended_visual_attention_mask = self._prepare_attention_mask(video_attention_mask)
+        visual_embedding_output = self.visual_embeddings(video)
+
+        extended_audio_attention_mask = self._prepare_attention_mask(audio_attention_mask)
+        audio_embedding_output = self.audio_embeddings(audio)
+
+        encoded_layers = self.encoder([text_embedding_output, visual_embedding_output, audio_embedding_output],
+                                      [extended_text_attention_mask, extended_visual_attention_mask, extended_audio_attention_mask],
                                       output_all_encoded_layers=output_all_encoded_layers)
-        sequence_output = encoded_layers[-1]
-        pooled_output = self.pooler(sequence_output)
+        all_output = encoded_layers[-1]
+        pooled_text_output = self.text_pooler(all_output[0])
+        pooled_visual_output = self.visual_pooler(all_output[1])
+        pooled_audio_output = self.audio_pooler(all_output[2])
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
-        return encoded_layers, pooled_output
+        return encoded_layers, pooled_text_output, pooled_visual_output, pooled_audio_output, #pooled_text_output, pooled_visual_output, pooled_audio_output

@@ -1,11 +1,12 @@
 import pickle as pkl
 import numpy as np
 import json
+from collections import defaultdict
 
 
 def main(include_summary=False, is_last=False):
     caption_pkl = pkl.load(open('data/dstc10/dstc10_data.caption.pickle', 'rb'))
-    train = json.load(open('data/dstc10/train_set4DSTC7-AVSD.json'))
+    train = json.load(open('data/dstc10/train_set4DSTC8-AVSD+reason.json'))
     dev = json.load(open('data/dstc10/valid_set4DSTC7-AVSD.json'))
     for d in train['dialogs'] + dev['dialogs']:
         image_id = d['image_id']
@@ -20,7 +21,11 @@ def main(include_summary=False, is_last=False):
                 transcript.append((c_his + ' ' + q + ' | ' + d['caption'] + ' | '+ d['summary']).strip())
             else:
                 transcript.append((c_his + ' ' + q).strip())
-            text.append(a.replace('Robot: ', ''))
+            if 'reason' in c and c['reason']:
+                reason = c['reason'][0]['sentence']
+                text.append(reason)
+            else:
+                text.append(a.replace('Robot: ', ''))
             his.append(q)
             his.append(a)
         if is_last:
@@ -36,12 +41,46 @@ def main(include_summary=False, is_last=False):
     elif is_last:
         pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.last.pickle', 'wb'))
     else:
-        pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.pickle', 'wb'))
+        pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.exp.pickle', 'wb'))
     print('done')
 
 
+def main_test(is_last=False):
+    test = json.load(open('data/dstc10/test_set4DSTC10-AVSD.json'))
+    caption_pkl = defaultdict(dict)
+    features_pkl = pkl.load(open('data/dstc10/dstc10_test_video_features.pickle', 'rb'))
+    for d in test['dialogs']:
+        image_id = d['image_id']
+        his = []
+        transcript = []
+        text = []
+        for c in d['dialog']:
+            c_his = ' '.join(his)
+            q = 'User: ' + c['question']
+            a = 'Robot: ' + c['answer']
+            transcript.append((c_his + ' ' + q).strip())
+            # if 'reason' in c and c['reason']:
+            #     reason = c['reason'][0]['sentence']
+            #     text.append(reason)
+            # else:
+            text.append(a.replace('Robot: ', ''))
+            his.append(q)
+            his.append(a)
+        if is_last:
+            text = text[-1:]
+            transcript = transcript[-1:]
+        caption_pkl[image_id]['text'] = np.array(text).reshape(-1)
+        caption_pkl[image_id]['transcript'] = np.array(transcript).reshape(-1)
+        n = caption_pkl[image_id]['text'].shape[0]
+        caption_pkl[image_id]['start'] = np.array([0] * n)
+        caption_pkl[image_id]['end'] = np.array([features_pkl[image_id].shape[0]] * n)
+    if is_last:
+        pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.test.last.pickle', 'wb'))
+    else:
+        pkl.dump(caption_pkl, open('data/dstc10/dstc10_data.test.pickle', 'wb'))
+
 def main_test_csv():
-    test = json.load(open('data/dstc10/test_set4DSTC7-AVSD.json'))
+    test = json.load(open('data/dstc10/test_set4DSTC10-AVSD.json'))
     test_imgids = []
     for d in test['dialogs']:
         image_id = d['image_id']
@@ -105,4 +144,4 @@ def merge_to_all():
 
 
 if __name__ == '__main__':
-    merge_to_all()
+    main_test_csv()

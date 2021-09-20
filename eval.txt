@@ -16,6 +16,18 @@ With pretrained weight + UniVL (BERT) finetuned for summary on s3d
 With pretrained weight + UniVL (BERT) on s3d + vggish
 (dev)BLEU-4: 12.4 METEOR: 0.1511, ROUGE_L: 0.3822, CIDEr: 1.2718
 
+With pretrained weight + UniVL - EF (BERT) on s3d + changhuai's audio features
+(dev)BLEU_4: 12.0 METEOR: 0.1490, ROUGE_L: 0.3798, CIDEr: 1.2431
+
+With pretrained weight + UniVL - MF (BERT) on s3d + changhuai's audio features
+(dev)BLEU_4: 12.1 METEOR: 0.1493, ROUGE_L: 0.3792, CIDEr: 1.2390
+
+With pretrained weight + UniVL - EF (text encoder output only) (BERT)
+(dev)BLEU_4: 12.1 METEOR: 0.1495, ROUGE_L: 0.3796, CIDEr: 1.2468
+
+With pretrained weight + UniVL - EF (video, audio output only) (BERT)
+(dev)BLEU_4: 10.7 METEOR: 0.1410, ROUGE_L: 0.3633, CIDEr: 1.0923
+
 With pretrained weight + MED-CAT (BERT) on s3d + vggish
 (dev)BLEU-4: 12.2 METEOR: 0.1496, ROUGE_L: 0.3807, CIDEr: 1.2612
 
@@ -54,3 +66,66 @@ With pretrained weight + BART-large (dialogue history only)
 With pretrained weight + T5-base (dialogue history only)
 (dev)Bleu_4: 9.1 METEOR: 0.210 ROUGE_L: 0.351 CIDEr: 0.728
 (test)Bleu_4: 9.6 METEOR: 0.186 ROUGE_L: 0.326 CIDEr: 0.576
+
+
+first epoch
+
+L_a = L_v = L_t = 12
+H_multi = 4 (EF)
+BLEU_4: 0.0530 ETEOR: 0.0901, ROUGE_L: 0.2660, CIDEr: 0.4391
+
+L_a = L_v = 6
+L_t = 12
+H_multi = 2 (EF)
+BLEU_4: 0.0878 BLEU_1: 0.2799, BLEU_2: 0.1728, BLEU_3: 0.1202
+
+L_a = L_v = 6
+L_t = 12
+H_multi = 6 (EF)
+BLEU_4: 0.0881 METEOR: 0.1248, ROUGE_L: 0.3366, CIDEr: 0.8442
+
+(LF)
+L_a = L_v = 6
+L_t = 12
+BLEU_4: 0.1162 METEOR: 0.1454, ROUGE_L: 0.3740, CIDEr: 1.1934
+
+(LF)
+L_a = L_v = 3
+L_t = 12
+L_decoder = 3
+BLEU_4: 0.1166 METEOR: 0.1453, ROUGE_L: 0.3743, CIDEr: 1.1923
+
+L_a = L_v = 1
+L_t = 12
+L_decoder = 3,, max_frame=60
+BLEU_4: 0.1170 METEOR: 0.1454, ROUGE_L: 0.3743, CIDEr: 1.1956
+
+L_a = L_v = 1
+L_t = 12
+L_decoder = 6, max_frame=60
+BLEU_4: BLEU_4: 0.1161 METEOR: 0.1444, ROUGE_L: 0.3724, CIDEr: 1.1869
+
+L_a = L_v = 1
+L_t = 12
+L_decoder = 3, max_frame=30
+BLEU_4: 0.1164  METEOR: 0.1454, ROUGE_L: 0.3741, CIDEr: 1.1952
+
+L_a = L_v = 1
+L_t = 12
+L_decoder = 3, max_frame=60 (vggish)
+BLEU_4: BLEU_4: 0.1161 METEOR: 0.1444, ROUGE_L: 0.3724, CIDEr: 1.1869
+
+L_a = L_v = 1
+L_t = 12
+L_decoder = 3, max_frame=60, max_words=300, 3e-5
+BLEU_4: 0.1176  METEOR: 0.1461, ROUGE_L: 0.3754, CIDEr: 1.2062
+
+
+L_a = L_v = 1
+L_t = 12
+L_decoder = 3, max_frame=60, max_words=300, 5e-5
+BLEU_4: 0.1243 METEOR: 0.1525, ROUGE_L: 0.3833, CIDEr: 1.2745
+
+
+Explaination generation:
+BLEU_4: 0.0910 METEOR: 0.1366, ROUGE_L: 0.3372, CIDEr: 0.9045

@@ -391,7 +391,10 @@ def collate_active_info(input_tuples, inst_idx_to_position_map, active_inst_idx_
     active_inst_idx = [inst_idx_to_position_map[k] for k in active_inst_idx_list]
     active_inst_idx = torch.LongTensor(active_inst_idx).to(device)
 
-    active_sequence_output_rpt = collect_active_part(sequence_output_rpt, active_inst_idx, n_prev_active_inst, n_bm)
+    if sequence_output_rpt is None:
+        active_sequence_output_rpt = None
+    else:
+        active_sequence_output_rpt = collect_active_part(sequence_output_rpt, active_inst_idx, n_prev_active_inst, n_bm)
     if visual_output_rpt is None:
         active_visual_output_rpt = None
         active_video_mask_rpt = None
@@ -503,8 +506,9 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             sequence_output, visual_output, audio_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
             # -- Repeat data for beam search
             n_bm = 5 # beam_size
-            device = sequence_output.device
-            n_inst, len_s, d_h = sequence_output.size()
+            device = input_ids.device
+            n_inst, len_s = input_ids.shape[0], input_ids.shape[2]
+            d_h = (None if sequence_output is None else sequence_output.shape[2])
 
             decoder = model.decoder_caption
 
@@ -512,9 +516,12 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             input_mask = input_mask.view(-1, input_mask.shape[-1])
 
-            sequence_output_rpt = sequence_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_s, d_h)
+            if sequence_output is None:
+                sequence_output_rpt = None
+            else:
+                sequence_output_rpt = sequence_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_s, d_h)
 
-            if not args.skip_visual:
+            if not args.skip_visual and visual_output is not None:
                 video_mask = video_mask.view(-1, video_mask.shape[-1])
                 _, len_v, v_h = visual_output.size()
                 visual_output_rpt = visual_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_v, v_h)
@@ -522,14 +529,16 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             else:
                 visual_output_rpt = None
                 video_mask_rpt = None
-            if not args.skip_audio:
+                len_v = None
+            if not args.skip_audio and audio_output is not None:
                 audio_mask = audio_mask.view(-1, audio_mask.shape[-1])
-                _, len_v, v_h = audio_output.size()
-                audio_output_rpt = audio_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_v, v_h)
-                audio_mask_rpt = audio_mask.repeat(1, n_bm).view(n_inst * n_bm, len_v)
+                _, len_a, v_a = audio_output.size()
+                audio_output_rpt = audio_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_a, v_a)
+                audio_mask_rpt = audio_mask.repeat(1, n_bm).view(n_inst * n_bm, len_a)
             else:
                 audio_output_rpt = None
                 audio_mask_rpt = None
+                len_a = None
 
             input_ids_rpt = input_ids.repeat(1, n_bm).view(n_inst * n_bm, len_s)
             input_mask_rpt = input_mask.repeat(1, n_bm).view(n_inst * n_bm, len_s)
@@ -568,16 +577,18 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
 
             for re_idx, re_list in enumerate(result_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)
-                decode_attns = attw_mean[re_idx][:, input_ids.shape[1]:input_ids.shape[1]+len_v]
-                decode_attns = decode_attns.softmax(-1)
-                decode_attns_mean = torch.mean(decode_attns, axis=0)
-                frame_indices = torch.arange(len_v, dtype=torch.float, device=decode_attns.device) / len_v
-                frame_mean = float((frame_indices * decode_attns_mean).sum())
-                frame_std = float(((frame_indices - frame_mean) ** 2 * decode_attns_mean).sum().sqrt())
-                start_time = max(0.0, (frame_mean - frame_std))
-                end_time = min(1.0, (frame_mean + frame_std))
-                start_time = len_v * start_time
-                end_time = len_v * end_time
+                if len_v is not None and d_h is not None:
+                    decode_attns = attw_mean[re_idx][:, input_ids.shape[1]:input_ids.shape[1]+len_v]
+                    decode_attns = decode_attns.softmax(-1)
+                    decode_attns_mean = torch.mean(decode_attns, axis=0)
+                    frame_indices = torch.arange(len_v, dtype=torch.float, device=decode_attns.device) / len_v
+                    frame_mean = float((frame_indices * decode_attns_mean).sum())
+                    frame_std = float(((frame_indices - frame_mean) ** 2 * decode_attns_mean).sum().sqrt())
+                    start_time = max(0.0, (frame_mean - frame_std))
+                    end_time = min(1.0, (frame_mean + frame_std))
+                    start_time = len_v * start_time
+                    end_time = len_v * end_time
+                    all_time_lists.append('%.1f:%.1f' % (start_time, end_time))
                 if "[SEP]" in decode_text_list:
                     SEP_index = decode_text_list.index("[SEP]")
                     decode_text_list = decode_text_list[:SEP_index]
@@ -587,7 +598,6 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
                 decode_text = ' '.join(decode_text_list)
                 decode_text = decode_text.replace(" ##", "").strip("##").strip()
                 all_result_lists.append(decode_text)
-                all_time_lists.append('%.1f:%.1f' % (start_time, end_time))
 
             for re_idx, re_list in enumerate(caption_list):
                 decode_text_list = tokenizer.convert_ids_to_tokens(re_list)

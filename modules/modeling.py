@@ -34,7 +34,6 @@ from modules.module_audio import AudioModel, AudioConfig, AudioOnlyMLMHead
 from modules.module_cross import CrossModel, CrossConfig
 from modules.module_decoder import DecoderModel, DecoderConfig
 from modules.module_ef import MultimodalModel, MultimodalConfig
-from modules.module_attn import MultiheadedAttention, ResidualConnection
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +56,43 @@ class UniVLPreTrainedModel(PreTrainedModel, nn.Module):
         self.audio = None
         self.cross = None
         self.decoder = None
+    
+    @classmethod
+    def rename_state_dict(cls, state_dict, visual_num_hidden_layers):
+        _rename_map = {
+            'bert.embeddings': 'mm_model.text_embeddings',
+            'bert.encoder.layer.0.attention': 'mm_model.encoder.layer.0.text_attention',
+            'bert.encoder.layer.0.intermediate': 'mm_model.encoder.layer.0.text_intermediate',
+            'bert.encoder.layer.0.output': 'mm_model.encoder.layer.0.text_output',
+            'bert.pooler': 'mm_model.text_pooler',
+            'visual.embeddings': 'mm_model.visual_embeddings',
+            'visual.encoder.layer.0.attention': 'mm_model.encoder.layer.%d.visual_attention' % (12 - visual_num_hidden_layers),
+            'visual.encoder.layer.0.intermediate': 'mm_model.encoder.layer.%d.visual_intermediate' % (12 - visual_num_hidden_layers),
+            'visual.encoder.layer.0.output': 'mm_model.encoder.layer.%d.visual_output' % (12 - visual_num_hidden_layers),
+            'visual.pooler': 'mm_model.visual_pooler',
+        }
+        updates = dict()
+        for k, v in _rename_map.items():
+            if '.0.' in k:
+                is_bert = k.startswith('bert.')
+                if is_bert:
+                    for idx in range(1, 13):
+                        updates[k.replace('.0.', '.%d.' % idx)] = v.replace('.0.', '.%d.' % idx)
+                else:
+                    for idx in range(1, 7):
+                        updates[k.replace('.0.', '.%d.' % idx)] = v.replace('.0.', '.%d.' % (idx + 12 - visual_num_hidden_layers))
+        _rename_map.update(updates)
+        new_state_dicts = dict()
+        for k, v in state_dict.items():
+            found = False
+            for each_k in _rename_map:
+                if k.startswith(each_k):
+                    found = True
+                    new_state_dicts[k.replace(each_k, _rename_map[each_k])] = v
+                    break
+            if not found:
+                new_state_dicts[k] = v
+        return new_state_dicts
 
     @classmethod
     def from_pretrained(cls, pretrained_bert_name, visual_model_name, audio_model_name, cross_model_name, decoder_model_name,
@@ -77,12 +113,14 @@ class UniVLPreTrainedModel(PreTrainedModel, nn.Module):
         decoder_config, _ = DecoderConfig.get_config(decoder_model_name, cache_dir, type_vocab_size, state_dict=None, task_config=task_config)
 
         model = cls(bert_config, visual_config, audio_config, cross_config, decoder_config, *inputs, **kwargs)
+        model.bert = None
+        model.audio = None
+        model.visual = None
+        delattr(model, 'bert')
+        delattr(model, 'audio')
+        delattr(model, 'visual')
 
-        assert model.bert is not None
-        if not task_config.skip_visual:
-            assert model.visual is not None
-        if not task_config.skip_audio:
-            assert model.audio is not None
+        state_dict = cls.rename_state_dict(state_dict, visual_config.num_hidden_layers)
 
         if state_dict is not None:
             model = cls.init_preweight(model, state_dict, task_config=task_config)
@@ -164,23 +202,23 @@ class UniVL(UniVLPreTrainedModel):
         self.mm_model = MultimodalModel(mm_config, self.bert.config, self.visual.config, self.audio.config)
 
         # <=== End of Video Encoder
-        # TODO: Modify later
-        drop_p = 0.1 
-        H = 4
-        self.bi_modal_att_text_visual = MultiheadedAttention(bert_config.hidden_size, visual_config.hidden_size, visual_config.hidden_size, H, drop_p, bert_config.hidden_size)
-        self.bi_modal_att_text_audio = MultiheadedAttention(bert_config.hidden_size, audio_config.hidden_size, audio_config.hidden_size, H, drop_p, bert_config.hidden_size)
-        self.res_layer_visual = ResidualConnection(bert_config.hidden_size, drop_p)
-        self.res_layer_audio = ResidualConnection(bert_config.hidden_size, drop_p)
+        # # TODO: Modify later
+        # drop_p = 0.1 
+        # H = 4
+        # self.bi_modal_att_text_visual = MultiheadedAttention(bert_config.hidden_size, visual_config.hidden_size, visual_config.hidden_size, H, drop_p, bert_config.hidden_size)
+        # self.bi_modal_att_text_audio = MultiheadedAttention(bert_config.hidden_size, audio_config.hidden_size, audio_config.hidden_size, H, drop_p, bert_config.hidden_size)
+        # self.res_layer_visual = ResidualConnection(bert_config.hidden_size, drop_p)
+        # self.res_layer_audio = ResidualConnection(bert_config.hidden_size, drop_p)
 
-        self.bi_modal_att_visual_text = MultiheadedAttention(visual_config.hidden_size, bert_config.hidden_size, bert_config.hidden_size, H, drop_p, visual_config.hidden_size)
-        self.bi_modal_att_visual_audio = MultiheadedAttention(visual_config.hidden_size, audio_config.hidden_size, audio_config.hidden_size, H, drop_p, visual_config.hidden_size)
-        self.res_layer_visual_text = ResidualConnection(visual_config.hidden_size, drop_p)
-        self.res_layer_visual_audio = ResidualConnection(visual_config.hidden_size, drop_p)
+        # self.bi_modal_att_visual_text = MultiheadedAttention(visual_config.hidden_size, bert_config.hidden_size, bert_config.hidden_size, H, drop_p, visual_config.hidden_size)
+        # self.bi_modal_att_visual_audio = MultiheadedAttention(visual_config.hidden_size, audio_config.hidden_size, audio_config.hidden_size, H, drop_p, visual_config.hidden_size)
+        # self.res_layer_visual_text = ResidualConnection(visual_config.hidden_size, drop_p)
+        # self.res_layer_visual_audio = ResidualConnection(visual_config.hidden_size, drop_p)
 
-        self.bi_modal_att_audio_text = MultiheadedAttention(audio_config.hidden_size, bert_config.hidden_size, bert_config.hidden_size, H, drop_p, audio_config.hidden_size)
-        self.bi_modal_att_audio_visual = MultiheadedAttention(audio_config.hidden_size, visual_config.hidden_size, visual_config.hidden_size, H, drop_p, audio_config.hidden_size)
-        self.res_layer_audio_text = ResidualConnection(audio_config.hidden_size, drop_p)
-        self.res_layer_audio_visual = ResidualConnection(audio_config.hidden_size, drop_p)
+        # self.bi_modal_att_audio_text = MultiheadedAttention(audio_config.hidden_size, bert_config.hidden_size, bert_config.hidden_size, H, drop_p, audio_config.hidden_size)
+        # self.bi_modal_att_audio_visual = MultiheadedAttention(audio_config.hidden_size, visual_config.hidden_size, visual_config.hidden_size, H, drop_p, audio_config.hidden_size)
+        # self.res_layer_audio_text = ResidualConnection(audio_config.hidden_size, drop_p)
+        # self.res_layer_audio_visual = ResidualConnection(audio_config.hidden_size, drop_p)
 
         if self._stage_one is False or self.train_sim_after_cross:
             # Cross Encoder ===>
@@ -351,9 +389,12 @@ class UniVL(UniVLPreTrainedModel):
                 audio_mask = audio_mask.view(-1, video_mask.shape[-1])
                 audio = self.normalize_audio_feature(audio)
 
-        self.mm_model(input_ids, video, video_mask, audio, audio_mask, 
+        encoded_layers, _, _, _ = self.mm_model(input_ids, video, video_mask, audio, audio_mask, 
             text_token_type_ids=token_type_ids, text_attention_mask=attention_mask, output_all_encoded_layers=True)
-        return None
+        sequence_output = encoded_layers[-1][0]
+        visual_output = encoded_layers[-1][1]
+        audio_output = encoded_layers[-1][2]
+        return sequence_output, visual_output, audio_output
         # encoded_layers, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
         # sequence_output = encoded_layers[-1]
 
@@ -372,45 +413,50 @@ class UniVL(UniVLPreTrainedModel):
         if self.task_config.skip_visual:
             return sequence_output, None, attention_mask
 
-        video_mask = video_mask.unsqueeze(1)
-        audio_mask = audio_mask.unsqueeze(1)
-        attention_mask = attention_mask.unsqueeze(1)
-        def sublayer_att_text_visual(text): return self.bi_modal_att_text_visual(text, visual_output, visual_output, video_mask)
-        def sublayer_att_text_audio(text): return self.bi_modal_att_text_audio(text, audio_output, audio_output, audio_mask)
+        # video_mask = video_mask.unsqueeze(1)
+        # audio_mask = audio_mask.unsqueeze(1)
+        # attention_mask = attention_mask.unsqueeze(1)
+        # def sublayer_att_text_visual(text): return self.bi_modal_att_text_visual(text, visual_output, visual_output, video_mask)
+        # def sublayer_att_text_audio(text): return self.bi_modal_att_text_audio(text, audio_output, audio_output, audio_mask)
 
-        def sublayer_att_visual_text(visual): return self.bi_modal_att_visual_text(visual, sequence_output, sequence_output, attention_mask)
-        def sublayer_att_visual_audio(visual): return self.bi_modal_att_visual_audio(visual, audio_output, audio_output, audio_mask)
+        # def sublayer_att_visual_text(visual): return self.bi_modal_att_visual_text(visual, sequence_output, sequence_output, attention_mask)
+        # def sublayer_att_visual_audio(visual): return self.bi_modal_att_visual_audio(visual, audio_output, audio_output, audio_mask)
 
-        def sublayer_att_audio_text(audio): return self.bi_modal_att_audio_text(audio, visual_output, visual_output, video_mask)
-        def sublayer_att_audio_visual(audio): return self.bi_modal_att_audio_visual(audio, audio_output, audio_output, audio_mask)
+        # def sublayer_att_audio_text(audio): return self.bi_modal_att_audio_text(audio, visual_output, visual_output, video_mask)
+        # def sublayer_att_audio_visual(audio): return self.bi_modal_att_audio_visual(audio, audio_output, audio_output, audio_mask)
 
-        visual_aware_sequence_output = self.res_layer_visual(sequence_output, sublayer_att_text_visual)
-        visual_audio_aware_sequence_output = self.res_layer_audio(visual_aware_sequence_output, sublayer_att_text_audio)
+        # visual_aware_sequence_output = self.res_layer_visual(sequence_output, sublayer_att_text_visual)
+        # visual_audio_aware_sequence_output = self.res_layer_audio(visual_aware_sequence_output, sublayer_att_text_audio)
 
-        text_aware_visual_output = self.res_layer_visual_text(visual_output, sublayer_att_visual_text)
-        text_audio_aware_visual_output = self.res_layer_visual_audio(text_aware_visual_output, sublayer_att_visual_audio)
+        # text_aware_visual_output = self.res_layer_visual_text(visual_output, sublayer_att_visual_text)
+        # text_audio_aware_visual_output = self.res_layer_visual_audio(text_aware_visual_output, sublayer_att_visual_audio)
         
-        text_aware_audio_output = self.res_layer_audio_text(audio_output, sublayer_att_audio_text)
-        text_visual_aware_audio_output = self.res_layer_audio_visual(text_aware_audio_output, sublayer_att_audio_visual)
+        # text_aware_audio_output = self.res_layer_audio_text(audio_output, sublayer_att_audio_text)
+        # text_visual_aware_audio_output = self.res_layer_audio_visual(text_aware_audio_output, sublayer_att_audio_visual)
         
-        video_mask = video_mask.squeeze(1)
-        audio_mask = audio_mask.squeeze(1)
-        attention_mask = attention_mask.squeeze(1)
-        sequence_output = visual_audio_aware_sequence_output
-        visual_output = text_audio_aware_visual_output
-        audio_output = text_visual_aware_audio_output
+        # video_mask = video_mask.squeeze(1)
+        # audio_mask = audio_mask.squeeze(1)
+        # attention_mask = attention_mask.squeeze(1)
+        # sequence_output = visual_audio_aware_sequence_output
+        # visual_output = text_audio_aware_visual_output
+        # audio_output = text_visual_aware_audio_output
 
-        concat_features = torch.cat((sequence_output, visual_output, audio_output), dim=1)  # concatnate tokens and frames
-        concat_mask = torch.cat((attention_mask, video_mask, audio_mask), dim=1)
-        text_type_ = torch.zeros_like(attention_mask)
-        video_type_ = torch.ones_like(video_mask)
-        audio_type_ = torch.ones_like(audio_mask)
-        concat_type = torch.cat((text_type_, video_type_, audio_type_), dim=1)
+        tuple_features = (sequence_output, visual_output, audio_output)
+        tuple_masks = (attention_mask, video_mask, audio_mask)
+        valid = tuple([tuple_features[idx] is not None for idx in range(len(tuple_features))])
+        valid_features = tuple([tuple_features[idx] for idx in range(len(valid)) if valid[idx]])
+        valid_masks = tuple([tuple_masks[idx] for idx in range(len(valid)) if valid[idx]])
+
+        concat_features = torch.cat(valid_features, dim=1)  # concatnate tokens and frames
+        concat_mask = torch.cat(valid_masks, dim=1)
+        # text_type_ = torch.zeros_like(attention_mask)
+        # video_type_ = torch.ones_like(video_mask)
+        # audio_type_ = torch.ones_like(audio_mask)
+        # concat_type = torch.cat((text_type_, video_type_, audio_type_), dim=1)
 
         return concat_features, None, concat_mask
         # cross_layers, pooled_output = self.cross(concat_features, concat_type, concat_mask, output_all_encoded_layers=True)
         # cross_output = cross_layers[-1]
-
         # return cross_output, pooled_output, concat_mask
 
     def _mean_pooling_for_similarity(self, sequence_output, visual_output, attention_mask, video_mask,):

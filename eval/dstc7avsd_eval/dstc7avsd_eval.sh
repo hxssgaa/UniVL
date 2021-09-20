@@ -12,7 +12,7 @@ fi
 # arguments
 myArray=("$@")
 # references
-reference=data/test_set4DSTC7-AVSD_partial.json
+reference=data/test_set4DSTC10-AVSD_partial.json
 
 # ms-coco setup
 if [ ! -d utils/coco-caption ]; then
@@ -25,6 +25,8 @@ for result in "${myArray[@]}"; do
     echo "Result: $result"
     hypothesis="${result%.*}_hyp.json"
     result_eval="${result%.*}.eval"
+    echo "$result"
+    echo "$hypothesis"
     python utils/get_hypotheses.py -l -s data/stopwords.txt "$result" "$hypothesis"
     python utils/evaluate.py "$reference" "$hypothesis" >& "$result_eval"
     echo "--- summary ---"
