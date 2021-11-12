@@ -199,7 +199,9 @@ class UniVL(UniVLPreTrainedModel):
             audio_word_embeddings_weight = self.audio.embeddings.word_embeddings.weight
 
         mm_config = MultimodalConfig()
-        self.mm_model = MultimodalModel(mm_config, self.bert.config, self.visual.config, self.audio.config)
+        visual_cfg = self.visual.config if self.visual is not None else None
+        audio_cfg = self.audio.config if self.audio is not None else None
+        self.mm_model = MultimodalModel(mm_config, self.bert.config, visual_cfg, audio_cfg)
 
         # <=== End of Video Encoder
         # # TODO: Modify later

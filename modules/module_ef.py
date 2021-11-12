@@ -288,7 +288,7 @@ class MultimodalLayer(nn.Module):
             audio_attention_output = self.audio_attention(hidden_states[2], attention_mask[2])
 
         # Multimodal attention
-        attention_mask = [1 - m.squeeze(1) / (-10000.0) for m in attention_mask]
+        attention_mask = [1 - m.squeeze(1) / (-10000.0) for m in attention_mask if m is not None]
         def sublayer_att_text_visual(text): return self.bi_modal_att_text_visual(text, visual_attention_output, visual_attention_output, attention_mask[1])
         def sublayer_att_text_audio(text): return self.bi_modal_att_text_audio(text, audio_attention_output, audio_attention_output, attention_mask[2])
 
@@ -312,7 +312,7 @@ class MultimodalLayer(nn.Module):
             visual_aware_audio_output = self.res_layer_audio_visual(audio_attention_output, sublayer_att_audio_visual)
             visual_attention_output = audio_aware_visual_output
             audio_attention_output = visual_aware_audio_output
-        attention_mask = [1 - m.unsqueeze(1) / (-10000.0) for m in attention_mask]
+        attention_mask = [1 - m.unsqueeze(1) / (-10000.0) for m in attention_mask if m is not None]
 
         # Position-wise feed-forward
         layer_output = []
@@ -341,10 +341,18 @@ class MultimodalEncoder(nn.Module):
     def __init__(self, config, text_config, visual_config, audio_config):
         super(MultimodalEncoder, self).__init__()
         text_num_hidden = text_config.num_hidden_layers
-        visual_num_hidden = visual_config.num_hidden_layers
-        audio_num_hidden = audio_config.num_hidden_layers
-
-        max_num_hidden = max(max(text_num_hidden, visual_num_hidden), audio_num_hidden)
+        max_num_hidden = text_num_hidden
+        if visual_config is not None:
+            visual_num_hidden = visual_config.num_hidden_layers
+            max_num_hidden = max(max_num_hidden, visual_num_hidden)
+        else:
+            visual_num_hidden = 0
+        if audio_config is not None:
+            audio_num_hidden = audio_config.num_hidden_layers
+            max_num_hidden = max(max_num_hidden, audio_num_hidden)
+        else:
+            audio_num_hidden = 0
+        
         enable_text = list(reversed([idx < text_num_hidden for idx in range(max_num_hidden)]))
         enable_visual = list(reversed([idx < visual_num_hidden for idx in range(max_num_hidden)]))
         enable_audio = list(reversed([idx < audio_num_hidden for idx in range(max_num_hidden)]))
@@ -372,12 +380,16 @@ class MultimodalModel(PreTrainedModel):
     def __init__(self, config, text_config, visual_config, audio_config):
         super(MultimodalModel, self).__init__(config)
         self.text_embeddings = TextEmbeddings(text_config)
-        self.visual_embeddings = VisualEmbeddings(visual_config)
-        self.audio_embeddings = VisualEmbeddings(audio_config)
+        if visual_config is not None:
+            self.visual_embeddings = VisualEmbeddings(visual_config)
+            self.visual_pooler = Pooler(visual_config)
+        if audio_config is not None:
+            self.audio_embeddings = VisualEmbeddings(audio_config)
+            self.audio_pooler = Pooler(audio_config)
         self.encoder = MultimodalEncoder(config, text_config, visual_config, audio_config)
         self.text_pooler = Pooler(text_config)
-        self.visual_pooler = Pooler(visual_config)
-        self.audio_pooler = Pooler(audio_config)
+        self.enable_video = visual_config is not None
+        self.enable_audio = audio_config is not None
 
         self.apply(self.init_weights)
 
@@ -403,9 +415,9 @@ class MultimodalModel(PreTrainedModel):
 
         if text_attention_mask is None:
             text_attention_mask = torch.ones_like(text_input_ids)
-        if video_attention_mask is None:
+        if self.enable_video and video_attention_mask is None:
             video_attention_mask = torch.ones(video.size(0), video.size(1))
-        if audio_attention_mask is None:
+        if self.enable_audio and audio_attention_mask is None:
             audio_attention_mask = torch.ones(audio.size(0), audio.size(1))
         if text_token_type_ids is None:
             text_token_type_ids = torch.zeros_like(text_input_ids)
@@ -413,19 +425,33 @@ class MultimodalModel(PreTrainedModel):
         extended_text_attention_mask = self._prepare_attention_mask(text_attention_mask)
         text_embedding_output = self.text_embeddings(text_input_ids, text_token_type_ids)
 
-        extended_visual_attention_mask = self._prepare_attention_mask(video_attention_mask)
-        visual_embedding_output = self.visual_embeddings(video)
+        if self.enable_video:
+            extended_visual_attention_mask = self._prepare_attention_mask(video_attention_mask)
+            visual_embedding_output = self.visual_embeddings(video)
+        else:
+            extended_visual_attention_mask = None
+            visual_embedding_output = None
 
-        extended_audio_attention_mask = self._prepare_attention_mask(audio_attention_mask)
-        audio_embedding_output = self.audio_embeddings(audio)
+        if self.enable_audio:
+            extended_audio_attention_mask = self._prepare_attention_mask(audio_attention_mask)
+            audio_embedding_output = self.audio_embeddings(audio)
+        else:
+            extended_audio_attention_mask = None
+            audio_embedding_output = None
 
         encoded_layers = self.encoder([text_embedding_output, visual_embedding_output, audio_embedding_output],
                                       [extended_text_attention_mask, extended_visual_attention_mask, extended_audio_attention_mask],
                                       output_all_encoded_layers=output_all_encoded_layers)
         all_output = encoded_layers[-1]
         pooled_text_output = self.text_pooler(all_output[0])
-        pooled_visual_output = self.visual_pooler(all_output[1])
-        pooled_audio_output = self.audio_pooler(all_output[2])
+        if self.enable_video:
+            pooled_visual_output = self.visual_pooler(all_output[1])
+        else:
+            pooled_visual_output = None
+        if self.enable_audio:
+            pooled_audio_output = self.audio_pooler(all_output[2])
+        else:
+            pooled_audio_output = None
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
         return encoded_layers, pooled_text_output, pooled_visual_output, pooled_audio_output, #pooled_text_output, pooled_visual_output, pooled_audio_output

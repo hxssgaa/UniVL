@@ -1,15 +1,15 @@
 TRAIN_CSV="data/dstc10/dstc10_train.csv"
-VAL_CSV="data/dstc10/dstc10_val.csv"
-DATA_PATH="data/dstc10/dstc10_data.exp.pickle"
-VIDEO_FEATURES_PATH="data/dstc10/dstc10_videos_features_all.pickle"
-AUDIO_FEATURES_PATH="data/dstc10/dstc10_audio_features_all.pickle"
-INIT_MODEL="weight/univl.pretrained.bin"
-# INIT_MODEL="ckpts/ckpt_youcook_caption/pytorch_model.bin.ans_gen.medcat.dialoghisonly"
+VAL_CSV="data/dstc10/dstc10_test.csv"
+DATA_PATH="data/dstc10/dstc10_data.test.pickle"
+VIDEO_FEATURES_PATH="data/dstc10/dstc10_test_video_features.pickle"
+AUDIO_FEATURES_PATH="data/dstc10/dstc10_test_audio_features.pickle"
+# INIT_MODEL="weight/univl.pretrained.bin"
+INIT_MODEL="ckpts/ckpt_charades_caption_exps/pytorch_model.bin.5"
 OUTPUT_ROOT="ckpts"
 
 python -m torch.distributed.launch --nproc_per_node=2 \
 	main_task_caption.py \
-	--do_train --num_thread_reader=8 \
+	--do_eval --num_thread_reader=8 \
 	--epochs=7 --batch_size=36 \
 	--n_display=100 \
 	--train_csv ${TRAIN_CSV} \

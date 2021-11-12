@@ -32,7 +32,9 @@ class Caption_DataLoader(Dataset):
         """
         self.csv = pd.read_csv(csv)
         self.data_dict = pickle.load(open(data_path, 'rb'))
-        self.video_feature_dict = pickle.load(open(video_features_path, 'rb'))
+        if video_features_path:
+            self.video_feature_dict = pickle.load(open(video_features_path, 'rb'))
+            self.video_feature_size = self.video_feature_dict[self.csv["feature_file"].values[0]].shape[-1]
         if audio_features_path:
             self.audio_feature_dict = pickle.load(open(audio_features_path, 'rb'))
             self.audio_feature_size = self.audio_feature_dict[self.csv["feature_file"].values[0]].shape[-1]
@@ -42,8 +44,6 @@ class Caption_DataLoader(Dataset):
         self.tokenizer = tokenizer
         self.skip_visual = skip_visual
         self.skip_audio = skip_audio
-
-        self.video_feature_size = self.video_feature_dict[self.csv["feature_file"].values[0]].shape[-1]
 
         # Get iterator video ids
         video_id_list = [itm for itm in self.csv['video_id'].values]

@@ -36,9 +36,9 @@ def get_args(description='UniVL on Caption Task'):
     parser.add_argument('--val_csv', type=str, default='data/youcookii_singlef_val.csv', help='')
     parser.add_argument('--data_path', type=str, default='data/youcookii_caption_transcript.pickle',
                         help='caption and transcription pickle file path')
-    parser.add_argument('--video_features_path', type=str, default='data/youcookii_videos_feature.pickle',
+    parser.add_argument('--video_features_path', type=str, default=None,
                         help='feature path for video 2D features')
-    parser.add_argument('--audio_features_path', type=str, default='data/youcookii_audio_feature.pickle',
+    parser.add_argument('--audio_features_path', type=str, default=None,
                         help='feature path for audio 2D features')
 
     parser.add_argument('--num_thread_reader', type=int, default=1, help='')
@@ -318,7 +318,7 @@ def train_epoch(epoch, args, model, train_dataloader, tokenizer, device, n_gpu, 
             input_ids, input_mask, segment_ids, \
             pairs_masked_text, pairs_token_labels, \
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
-            video = video_mask = masked_video = video_labels_index = None
+            video = video_mask = audio = audio_mask = masked_video = video_labels_index = masked_audio = audio_labels_index = None
         else:
             input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
             pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index,\
@@ -496,14 +496,20 @@ def eval_epoch(args, model, test_dataloader, tokenizer, device, n_gpu, nlgEvalOb
             input_ids, input_mask, segment_ids, \
             pairs_masked_text, pairs_token_labels, \
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
-            video = video_mask = masked_video = video_labels_index = None
+            video = video_mask = masked_video = video_labels_index = audio = audio_mask = masked_audio = audio_labels_index = None
         else:
             input_ids, input_mask, segment_ids, video, video_mask, audio, audio_mask, \
             pairs_masked_text, pairs_token_labels, masked_video, video_labels_index, masked_audio, audio_labels_index, \
             pairs_input_caption_ids, pairs_decoder_mask, pairs_output_caption_ids = batch
 
         with torch.no_grad():
-            sequence_output, visual_output, audio_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
+            if args.skip_visual and args.skip_audio:
+                sequence_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
+                sequence_output = sequence_output[0]
+            elif args.skip_audio:
+                sequence_output, visual_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
+            else:
+                sequence_output, visual_output, audio_output = model.get_sequence_visual_audio_output(input_ids, segment_ids, input_mask, video, video_mask, audio, audio_mask)
             # -- Repeat data for beam search
             n_bm = 5 # beam_size
             device = input_ids.device
